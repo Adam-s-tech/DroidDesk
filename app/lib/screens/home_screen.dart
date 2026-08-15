@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:droiddesk/theme/droid_theme.dart';
@@ -16,10 +17,21 @@ class HomeScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final state = context.watch<AppState>();
+    final isDark = state.isDarkMode;
 
-    return Scaffold(
-      body: Container(
-        decoration: const BoxDecoration(
+    final overlayStyle = SystemUiOverlayStyle(
+      statusBarColor: Colors.transparent,
+      statusBarIconBrightness: isDark ? Brightness.light : Brightness.dark,
+      statusBarBrightness: isDark ? Brightness.dark : Brightness.light,
+      systemNavigationBarColor: Colors.transparent,
+      systemNavigationBarIconBrightness: isDark ? Brightness.light : Brightness.dark,
+    );
+
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: overlayStyle,
+      child: Scaffold(
+        body: Container(
+        decoration: BoxDecoration(
           gradient: DroidTheme.backgroundGradient,
         ),
         child: SafeArea(
@@ -63,13 +75,33 @@ class HomeScreen extends StatelessWidget {
                       ),
                       const Spacer(),
                       Container(
-                        decoration: const BoxDecoration(
+                        decoration: BoxDecoration(
+                          color: DroidTheme.surfaceLight,
+                          shape: BoxShape.circle,
+                        ),
+                        child: IconButton(
+                          onPressed: () => state.toggleThemeMode(),
+                          tooltip: state.isDarkMode
+                              ? 'Switch to Light Theme'
+                              : 'Switch to Dark Theme',
+                          icon: Icon(
+                            state.isDarkMode
+                                ? Icons.light_mode_outlined
+                                : Icons.dark_mode_outlined,
+                            color: DroidTheme.textSecondary,
+                            size: 21,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Container(
+                        decoration: BoxDecoration(
                           color: DroidTheme.surfaceLight,
                           shape: BoxShape.circle,
                         ),
                         child: IconButton(
                           onPressed: () => _showSettings(context),
-                          icon: const Icon(
+                          icon: Icon(
                             Icons.settings_outlined,
                             color: DroidTheme.textSecondary,
                             size: 21,
@@ -284,25 +316,42 @@ class HomeScreen extends StatelessWidget {
           ),
         ),
       ),
-    );
-  }
+    ),
+  );
+}
 
   // ── Status Card ──
 
   Widget _buildStatusCard(AppState state) {
+    final isDark = DroidTheme.isDark;
+
+    final activeGradient = isDark
+        ? const LinearGradient(
+            colors: [Color(0xFF112B1A), Color(0xFF17231B)],
+          )
+        : const LinearGradient(
+            colors: [Color(0xFFECFDF5), Color(0xFFE6F4EA)],
+          );
+
+    final activeBorderColor = isDark
+        ? DroidTheme.accent.withValues(alpha: 0.3)
+        : const Color(0xFFA7F3D0);
+
+    final activeTitleColor = isDark
+        ? DroidTheme.accent
+        : const Color(0xFF047857);
+
+    final activeSubtitleColor = isDark
+        ? const Color(0xFFA7F3D0)
+        : const Color(0xFF065F46);
+
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        gradient: state.isRunning
-            ? const LinearGradient(
-                colors: [Color(0xFF112B1A), Color(0xFF17231B)],
-              )
-            : DroidTheme.cardGradient,
+        gradient: state.isRunning ? activeGradient : DroidTheme.cardGradient,
         borderRadius: BorderRadius.circular(DroidTheme.radiusLg),
         border: Border.all(
-          color: state.isRunning
-              ? DroidTheme.accent.withValues(alpha: 0.3)
-              : DroidTheme.surfaceBorder,
+          color: state.isRunning ? activeBorderColor : DroidTheme.surfaceBorder,
         ),
       ),
       child: Row(
@@ -313,11 +362,13 @@ class HomeScreen extends StatelessWidget {
             height: 12,
             decoration: BoxDecoration(
               shape: BoxShape.circle,
-              color: state.isRunning ? DroidTheme.accent : DroidTheme.textDim,
+              color: state.isRunning
+                  ? (isDark ? DroidTheme.accent : const Color(0xFF10B981))
+                  : DroidTheme.textDim,
               boxShadow: state.isRunning
                   ? [
                       BoxShadow(
-                        color: DroidTheme.accent.withValues(alpha: 0.5),
+                        color: DroidTheme.accent.withValues(alpha: 0.4),
                         blurRadius: 10,
                       ),
                     ]
@@ -333,7 +384,7 @@ class HomeScreen extends StatelessWidget {
                   state.isRunning ? 'Desktop active' : 'Ready when you are',
                   style: DroidTheme.headingSm.copyWith(
                     color: state.isRunning
-                        ? DroidTheme.accent
+                        ? activeTitleColor
                         : DroidTheme.textPrimary,
                   ),
                 ),
@@ -342,7 +393,11 @@ class HomeScreen extends StatelessWidget {
                   state.isRunning
                       ? 'Desktop Environment · ${_distroLabel(state.installedDistro)}'
                       : 'Launch Desktop Environment to begin',
-                  style: DroidTheme.bodySm,
+                  style: DroidTheme.bodySm.copyWith(
+                    color: state.isRunning
+                        ? activeSubtitleColor
+                        : DroidTheme.textMuted,
+                  ),
                 ),
               ],
             ),
@@ -399,98 +454,166 @@ class HomeScreen extends StatelessWidget {
   void _showSettings(BuildContext pageContext) {
     showModalBottomSheet(
       context: pageContext,
-      backgroundColor: DroidTheme.surface,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (sheetContext) => Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('Settings', style: DroidTheme.headingLg),
-            const SizedBox(height: 20),
-            ListTile(
-              leading: const Icon(
-                Icons.battery_charging_full,
-                color: DroidTheme.warning,
-              ),
-              title: const Text('Battery Optimization'),
-              subtitle: const Text('Disable to prevent session killing'),
-              onTap: () {
-                DroidDeskPlatform.requestBatteryOptimization();
-                Navigator.pop(sheetContext);
-              },
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (sheetContext) => Consumer<AppState>(
+        builder: (context, state, _) {
+          return Container(
+            decoration: BoxDecoration(
+              color: DroidTheme.surface,
+              borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+              border: Border.all(color: DroidTheme.surfaceBorder),
             ),
-            ListTile(
-              leading: const Icon(
-                Icons.home_rounded,
-                color: DroidTheme.primaryLight,
-              ),
-              title: const Text('Set as default launcher'),
-              subtitle: const Text(
-                'Open the Linux desktop when the phone starts',
-              ),
-              onTap: () {
-                Navigator.pop(sheetContext);
-                DroidDeskPlatform.requestDefaultLauncher();
-              },
+            padding: EdgeInsets.fromLTRB(
+              24,
+              24,
+              24,
+              24 + MediaQuery.of(sheetContext).padding.bottom,
             ),
-            FutureBuilder<bool>(
-              future: DroidDeskPlatform.isDefaultLauncher(),
-              builder: (_, snapshot) {
-                if (snapshot.data != true) return const SizedBox.shrink();
-                return ListTile(
-                  leading: const Icon(
-                    Icons.home_outlined,
-                    color: DroidTheme.error,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Settings', style: DroidTheme.headingLg),
+                  const SizedBox(height: 20),
+
+                  // App Theme Section
+                  Row(
+                    children: [
+                      Icon(
+                        state.isDarkMode
+                            ? Icons.dark_mode_rounded
+                            : Icons.light_mode_rounded,
+                        color: DroidTheme.primary,
+                      ),
+                      const SizedBox(width: 14),
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('App Theme', style: DroidTheme.headingSm),
+                          Text(
+                            state.themeMode == ThemeMode.system
+                                ? 'System Default'
+                                : state.isDarkMode
+                                    ? 'Dark Theme'
+                                    : 'Light Theme',
+                            style: DroidTheme.bodySm,
+                          ),
+                        ],
+                      ),
+                    ],
                   ),
-                  title: const Text('Stop using as default launcher'),
-                  subtitle: const Text('Choose another Home app directly'),
-                  onTap: () {
-                    Navigator.pop(sheetContext);
-                    _confirmUnsetLauncher(pageContext);
-                  },
-                );
-              },
-            ),
-            ListTile(
-              leading: const Icon(
-                Icons.auto_awesome_rounded,
-                color: DroidTheme.accent,
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    width: double.infinity,
+                    child: SegmentedButton<ThemeMode>(
+                      segments: const [
+                        ButtonSegment(
+                          value: ThemeMode.dark,
+                          label: Text('Dark'),
+                          icon: Icon(Icons.dark_mode_outlined, size: 16),
+                        ),
+                        ButtonSegment(
+                          value: ThemeMode.light,
+                          label: Text('Light'),
+                          icon: Icon(Icons.light_mode_outlined, size: 16),
+                        ),
+                        ButtonSegment(
+                          value: ThemeMode.system,
+                          label: Text('System'),
+                          icon: Icon(Icons.brightness_auto_outlined, size: 16),
+                        ),
+                      ],
+                      selected: {state.themeMode},
+                      onSelectionChanged: (Set<ThemeMode> selection) {
+                        state.setThemeMode(selection.first);
+                      },
+                    ),
+                  ),
+                  const Divider(height: 28),
+
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(
+                      Icons.battery_charging_full,
+                      color: DroidTheme.warning,
+                    ),
+                    title: const Text('Battery Optimization'),
+                    subtitle: const Text('Disable to prevent session killing'),
+                    onTap: () {
+                      DroidDeskPlatform.requestBatteryOptimization();
+                      Navigator.pop(sheetContext);
+                    },
+                  ),
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(
+                      Icons.home_rounded,
+                      color: DroidTheme.primaryLight,
+                    ),
+                    title: const Text('Set as default launcher'),
+                    subtitle: const Text(
+                      'Open the Linux desktop when the phone starts',
+                    ),
+                    onTap: () {
+                      Navigator.pop(sheetContext);
+                      DroidDeskPlatform.requestDefaultLauncher();
+                    },
+                  ),
+                  FutureBuilder<bool>(
+                    future: DroidDeskPlatform.isDefaultLauncher(),
+                    builder: (_, snapshot) {
+                      if (snapshot.data != true) return const SizedBox.shrink();
+                      return ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        leading: const Icon(
+                          Icons.home_outlined,
+                          color: DroidTheme.error,
+                        ),
+                        title: const Text('Stop using as default launcher'),
+                        subtitle: const Text('Choose another Home app directly'),
+                        onTap: () {
+                          Navigator.pop(sheetContext);
+                          _confirmUnsetLauncher(pageContext);
+                        },
+                      );
+                    },
+                  ),
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(
+                      Icons.auto_awesome_rounded,
+                      color: DroidTheme.accent,
+                    ),
+                    title: const Text('Desktop Tools'),
+                    subtitle: const Text('Manage dock apps and desktop backups'),
+                    onTap: () {
+                      Navigator.pop(sheetContext);
+                      Navigator.of(pageContext).push(
+                        MaterialPageRoute(builder: (_) => const DesktopToolsScreen()),
+                      );
+                    },
+                  ),
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    activeThumbColor: DroidTheme.primary,
+                    secondary: const Icon(
+                      Icons.bolt_outlined,
+                      color: DroidTheme.primary,
+                    ),
+                    title: const Text('Open automatically'),
+                    subtitle: const Text(
+                      'Start Desktop Environment when DroidDesk opens',
+                    ),
+                    value: state.autoStartDesktop,
+                    onChanged: state.setAutoStartDesktop,
+                  ),
+                ],
               ),
-              title: const Text('Desktop Tools'),
-              subtitle: const Text('Manage dock apps and desktop backups'),
-              onTap: () {
-                Navigator.pop(sheetContext);
-                Navigator.of(pageContext).push(
-                  MaterialPageRoute(builder: (_) => const DesktopToolsScreen()),
-                );
-              },
             ),
-            StatefulBuilder(
-              builder: (context, setState) {
-                final state = context.watch<AppState>();
-                return SwitchListTile(
-                  activeThumbColor: DroidTheme.primary,
-                  secondary: const Icon(
-                    Icons.bolt_outlined,
-                    color: DroidTheme.primary,
-                  ),
-                  title: const Text('Open automatically'),
-                  subtitle: const Text(
-                    'Start Desktop Environment when DroidDesk opens',
-                  ),
-                  value: state.autoStartDesktop,
-                  onChanged: (val) {
-                    state.setAutoStartDesktop(val);
-                  },
-                );
-              },
-            ),
-          ],
-        ),
+          );
+        },
       ),
     );
   }
@@ -524,10 +647,7 @@ class HomeScreen extends StatelessWidget {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
-      backgroundColor: const Color(0xFF0A0A0A),
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
+      backgroundColor: Colors.transparent,
       builder: (context) => _TerminalSheet(state: state),
     );
   }
@@ -594,141 +714,164 @@ class _TerminalSheetState extends State<_TerminalSheet> {
 
   @override
   Widget build(BuildContext context) {
-    return DraggableScrollableSheet(
-      initialChildSize: 0.7,
-      minChildSize: 0.3,
-      maxChildSize: 0.95,
-      expand: false,
-      builder: (context, scrollCtrl) {
-        return Padding(
-          padding: EdgeInsets.only(
-            bottom: MediaQuery.of(context).viewInsets.bottom,
+    return Consumer<AppState>(
+      builder: (context, state, _) {
+        final isDark = DroidTheme.isDark;
+
+        return Container(
+          decoration: BoxDecoration(
+            color: DroidTheme.surface,
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+            border: Border.all(color: DroidTheme.surfaceBorder),
           ),
-          child: Column(
-            children: [
-              // Handle bar
-              Container(
-                margin: const EdgeInsets.symmetric(vertical: 8),
-                width: 40,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: DroidTheme.textDim,
-                  borderRadius: BorderRadius.circular(2),
+          child: DraggableScrollableSheet(
+            initialChildSize: 0.7,
+            minChildSize: 0.3,
+            maxChildSize: 0.95,
+            expand: false,
+            builder: (context, scrollCtrl) {
+              return Padding(
+                padding: EdgeInsets.only(
+                  bottom: MediaQuery.of(context).viewInsets.bottom,
                 ),
-              ),
-
-              // Header
-              Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 4,
-                ),
-                child: Row(
+                child: Column(
                   children: [
-                    const Icon(
-                      Icons.terminal,
-                      size: 18,
-                      color: DroidTheme.secondary,
-                    ),
-                    const SizedBox(width: 8),
-                    Text('Terminal', style: DroidTheme.headingSm),
-                    const Spacer(),
-                    // Stop Command Button
-                    IconButton(
-                      icon: const Icon(
-                        Icons.stop_circle_rounded,
-                        color: DroidTheme.error,
-                        size: 20,
+                    // Handle bar
+                    Container(
+                      margin: const EdgeInsets.symmetric(vertical: 8),
+                      width: 40,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: DroidTheme.textMuted.withValues(alpha: 0.4),
+                        borderRadius: BorderRadius.circular(2),
                       ),
-                      onPressed: () {
-                        widget.state.interruptCommand();
-                        widget.state.appendTerminalOutput(
-                          '\n^C (Command interrupted)\n',
-                        );
-                      },
-                      tooltip: 'Interrupt Command (Ctrl+C)',
-                      splashRadius: 20,
                     ),
-                    const SizedBox(width: 8),
-                    Text(
-                      widget.state.isProotTerminal
-                          ? 'compat · Debian PRoot'
-                          : widget.state.hasRoot
-                          ? 'chroot · ${_distroLabel(widget.state.installedDistro)}'
-                          : 'native · Termux/TUR',
-                      style: DroidTheme.monoSm,
-                    ),
-                  ],
-                ),
-              ),
 
-              const Divider(color: DroidTheme.surfaceBorder, height: 1),
-
-              // Output
-              Expanded(
-                child: ListView.builder(
-                  controller: _scrollController,
-                  padding: const EdgeInsets.all(12),
-                  itemCount: widget.state.terminalOutput.length,
-                  itemBuilder: (context, index) {
-                    return SelectableText(
-                      widget.state.terminalOutput[index],
-                      style: DroidTheme.mono.copyWith(
-                        color:
-                            widget.state.terminalOutput[index].startsWith('\$')
-                            ? DroidTheme.accent
-                            : DroidTheme.textSecondary,
-                        height: 1.4,
+                    // Header
+                    Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 4,
                       ),
-                    );
-                  },
-                ),
-              ),
-
-              // Input
-              Container(
-                padding: const EdgeInsets.fromLTRB(12, 8, 8, 16),
-                decoration: const BoxDecoration(
-                  color: Color(0xFF0D0D0D),
-                  border: Border(
-                    top: BorderSide(color: DroidTheme.surfaceBorder),
-                  ),
-                ),
-                child: Row(
-                  children: [
-                    Text(
-                      '\$ ',
-                      style: DroidTheme.mono.copyWith(color: DroidTheme.accent),
+                      child: Row(
+                        children: [
+                          const Icon(
+                            Icons.terminal,
+                            size: 18,
+                            color: DroidTheme.primary,
+                          ),
+                          const SizedBox(width: 8),
+                          Text('Terminal', style: DroidTheme.headingSm),
+                          const Spacer(),
+                          // Stop Command Button
+                          IconButton(
+                            icon: const Icon(
+                              Icons.stop_circle_rounded,
+                              color: DroidTheme.error,
+                              size: 20,
+                            ),
+                            onPressed: () {
+                              widget.state.interruptCommand();
+                              widget.state.appendTerminalOutput(
+                                '\n^C (Command interrupted)\n',
+                              );
+                            },
+                            tooltip: 'Interrupt Command (Ctrl+C)',
+                            splashRadius: 20,
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            widget.state.isProotTerminal
+                                ? 'compat · Debian PRoot'
+                                : widget.state.hasRoot
+                                ? 'chroot · ${_distroLabel(widget.state.installedDistro)}'
+                                : 'native · Termux/TUR',
+                            style: DroidTheme.monoSm,
+                          ),
+                        ],
+                      ),
                     ),
+
+                    Divider(color: DroidTheme.surfaceBorder, height: 1),
+
+                    // Output Viewport (Dark container in both light & dark mode for high terminal contrast)
                     Expanded(
-                      child: TextField(
-                        controller: _controller,
-                        style: DroidTheme.mono.copyWith(fontSize: 13),
-                        decoration: const InputDecoration(
-                          border: InputBorder.none,
-                          hintText: 'Enter command...',
-                          hintStyle: TextStyle(color: DroidTheme.textDim),
-                          isDense: true,
-                          contentPadding: EdgeInsets.zero,
+                      child: Container(
+                        color: isDark ? const Color(0xFF0A0E17) : const Color(0xFF0F172A),
+                        child: ListView.builder(
+                          controller: _scrollController,
+                          padding: const EdgeInsets.all(12),
+                          itemCount: widget.state.terminalOutput.length,
+                          itemBuilder: (context, index) {
+                            final line = widget.state.terminalOutput[index];
+                            final isCommand = line.startsWith('\$');
+                            return SelectableText(
+                              line,
+                              style: DroidTheme.mono.copyWith(
+                                color: isCommand
+                                    ? const Color(0xFF34D399) // Emerald prompt
+                                    : const Color(0xFFE2E8F0), // Crisp white text
+                                height: 1.4,
+                              ),
+                            );
+                          },
                         ),
-                        onSubmitted: (_) => _runCommand(),
-                        autofocus: true,
                       ),
                     ),
-                    IconButton(
-                      onPressed: _runCommand,
-                      icon: const Icon(Icons.send_rounded, size: 20),
-                      color: DroidTheme.primary,
-                      padding: EdgeInsets.zero,
-                      constraints: const BoxConstraints(
-                        minWidth: 36,
-                        minHeight: 36,
+
+                    // Input Bar
+                    Container(
+                      padding: const EdgeInsets.fromLTRB(12, 8, 8, 16),
+                      decoration: BoxDecoration(
+                        color: isDark ? const Color(0xFF0D131F) : const Color(0xFF1E293B),
+                        border: Border(
+                          top: BorderSide(color: DroidTheme.surfaceBorder),
+                        ),
+                      ),
+                      child: Row(
+                        children: [
+                          Text(
+                            '\$ ',
+                            style: DroidTheme.mono.copyWith(
+                              color: const Color(0xFF34D399),
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          Expanded(
+                            child: TextField(
+                              controller: _controller,
+                              style: DroidTheme.mono.copyWith(
+                                fontSize: 13,
+                                color: Colors.white,
+                              ),
+                              decoration: const InputDecoration(
+                                border: InputBorder.none,
+                                hintText: 'Enter command...',
+                                hintStyle: TextStyle(color: Color(0xFF94A3B8)),
+                                isDense: true,
+                                contentPadding: EdgeInsets.zero,
+                              ),
+                              onSubmitted: (_) => _runCommand(),
+                              autofocus: true,
+                            ),
+                          ),
+                          IconButton(
+                            onPressed: _runCommand,
+                            icon: const Icon(Icons.send_rounded, size: 20),
+                            color: DroidTheme.primary,
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints(
+                              minWidth: 36,
+                              minHeight: 36,
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   ],
                 ),
-              ),
-            ],
+              );
+            },
           ),
         );
       },
@@ -818,7 +961,7 @@ class _ActionCard extends StatelessWidget {
                   ],
                 ),
               ),
-              const Icon(
+              Icon(
                 Icons.chevron_right_rounded,
                 color: DroidTheme.textDim,
               ),

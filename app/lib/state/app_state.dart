@@ -1,9 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:droiddesk/services/platform_bridge.dart';
+import 'package:droiddesk/theme/droid_theme.dart';
 
 /// Central state management for the entire DroidDesk app.
 class AppState extends ChangeNotifier {
+  // ── Theme State ──
+  ThemeMode _themeMode = ThemeMode.dark;
+
   // ── Setup State ──
   bool _isBootstrapped = false;
   bool _isRunning = false;
@@ -48,6 +52,8 @@ class AppState extends ChangeNotifier {
   bool get autoStartDesktop => _autoStartDesktop;
 
   // ── Getters ──
+  ThemeMode get themeMode => _themeMode;
+  bool get isDarkMode => DroidTheme.isDark;
   bool get isBootstrapped => _isBootstrapped;
   bool get isRunning => _isRunning;
   bool get hasRoot => _hasRoot;
@@ -88,6 +94,8 @@ class AppState extends ChangeNotifier {
   // ── Initialization ──
 
   Future<void> initialize() async {
+    await _loadThemeMode();
+
     // Set up progress callbacks
     DroidDeskPlatform.onDownloadProgress = (progress, status) {
       _downloadProgress = progress;
@@ -176,6 +184,46 @@ class AppState extends ChangeNotifier {
     if (_autoStartDesktop && isSetupComplete && !_isRunning) {
       // Auto-start desktop when the app (launcher) boots up
       startLinux(mode: 'x11');
+    }
+  }
+
+  // ── Theme Control ──
+
+  Future<void> _loadThemeMode() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final savedMode = prefs.getString('theme_mode');
+      if (savedMode == 'light') {
+        _themeMode = ThemeMode.light;
+      } else if (savedMode == 'system') {
+        _themeMode = ThemeMode.system;
+      } else {
+        _themeMode = ThemeMode.dark;
+      }
+      DroidTheme.currentThemeMode = _themeMode;
+      notifyListeners();
+      await DroidDeskPlatform.updateStatusBarTheme(!isDarkMode);
+    } catch (_) {
+      // Default to dark theme if preferences fail
+    }
+  }
+
+  Future<void> setThemeMode(ThemeMode mode) async {
+    _themeMode = mode;
+    DroidTheme.currentThemeMode = mode;
+    notifyListeners();
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('theme_mode', mode.name);
+      await DroidDeskPlatform.updateStatusBarTheme(!isDarkMode);
+    } catch (_) {}
+  }
+
+  Future<void> toggleThemeMode() async {
+    if (_themeMode == ThemeMode.dark) {
+      await setThemeMode(ThemeMode.light);
+    } else {
+      await setThemeMode(ThemeMode.dark);
     }
   }
 
