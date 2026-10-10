@@ -318,7 +318,7 @@ class MainActivity : FlutterActivity() {
 
                 // ── Chroot rootfs management (rooted) ──
                 "downloadRootfs" -> {
-                    thread {
+                    installThread("download-rootfs") {
                         try {
                             val latch = java.util.concurrent.CountDownLatch(1)
                             var success = false
@@ -345,7 +345,7 @@ class MainActivity : FlutterActivity() {
                 }
 
                 "extractRootfs" -> {
-                    thread {
+                    installThread("extract-rootfs") {
                         try {
                             val latch = java.util.concurrent.CountDownLatch(1)
                             var success = false
@@ -373,7 +373,7 @@ class MainActivity : FlutterActivity() {
 
                 "installDesktopEnvironment" -> {
                     val desktopEnv = call.argument<String>("de") ?: "xfce4"
-                    thread {
+                    installThread("install-desktop-chroot") {
                         try {
                             val latch = java.util.concurrent.CountDownLatch(1)
                             var success = false
@@ -408,7 +408,7 @@ class MainActivity : FlutterActivity() {
                 // ── Native Termux desktop install (non-root fallback) ──
                 "installDesktopNative" -> {
                     val desktopEnv = call.argument<String>("de") ?: "xfce4"
-                    thread {
+                    installThread("install-desktop-native") {
                         linuxRuntime.setInstallLogSink { chunk ->
                             appendTerminalOutput(chunk)
                         }
@@ -441,7 +441,7 @@ class MainActivity : FlutterActivity() {
 
                 "installOptionalApp" -> {
                     val appId = call.argument<String>("appId") ?: ""
-                    thread {
+                    installThread("install-optional-app") {
                         val logSink: (String) -> Unit = { chunk ->
                             appendTerminalOutput(chunk)
                         }
@@ -644,7 +644,7 @@ class MainActivity : FlutterActivity() {
                         }
                     } else {
                         // Non-root fallback: native Termux path
-                        thread {
+                        installThread("start-linux-native") {
                             linuxRuntime.extractBootstrapIfNeeded(applicationContext)
                             val installed = linuxRuntime.getInstalledDE()
                             val ready = installed == desktopEnv ||
@@ -659,7 +659,7 @@ class MainActivity : FlutterActivity() {
                                     ).show()
                                     result.success(false)
                                 }
-                                return@thread
+                                return@installThread
                             }
                             runOnUiThread {
                                 val intent = Intent(this@MainActivity, com.orailnoor.droiddesk.view.DesktopActivity::class.java).apply {
@@ -676,8 +676,11 @@ class MainActivity : FlutterActivity() {
 
                 "launchDesktopActivity" -> {
                     val rooted = chrootRuntime.hasRoot()
+                    // Flutter's "running" state can be stale (e.g. after Stop from the notification).
+                    val running = if (rooted) chrootRuntime.isRunning() else linuxRuntime.isRunning()
+                    if (!running) startForegroundService()
                     val intent = Intent(this@MainActivity, com.orailnoor.droiddesk.view.DesktopActivity::class.java).apply {
-                        putExtra("startSession", false)
+                        putExtra("startSession", !running)
                         putExtra("mode", if (rooted) "chroot" else "termux")
                         putExtra("de", if (rooted) "xfce4" else linuxRuntime.getInstalledDE())
                     }
@@ -686,6 +689,8 @@ class MainActivity : FlutterActivity() {
                 }
 
                 "stopLinux" -> {
+                    // A desktop screen left in the back stack would reopen onto a dead session.
+                    com.orailnoor.droiddesk.view.DesktopActivity.finishIfOpen()
                     thread(name = "stop-linux-session") {
                         if (chrootRuntime.hasRoot() || chrootRuntime.isRunning()) {
                             chrootRuntime.stopSession()
@@ -763,7 +768,7 @@ class MainActivity : FlutterActivity() {
                         // Nothing to bootstrap for chroot; rootfs handles it
                         result.success(true)
                     } else {
-                        thread {
+                        installThread("setup-bootstrap") {
                             linuxRuntime.extractBootstrapIfNeeded(applicationContext)
                             linuxRuntime.setupBootstrap()
                             runOnUiThread { result.success(true) }
@@ -854,7 +859,7 @@ class MainActivity : FlutterActivity() {
             result.success(false)
             return
         }
-        thread(name = if (remove) "package-remove" else "package-install") {
+        installThread(if (remove) "package-remove" else "package-install") {
             linuxRuntime.beginPackageOperation()
             linuxRuntime.setInstallLogSink { chunk ->
                 runOnUiThread {
@@ -888,6 +893,34 @@ class MainActivity : FlutterActivity() {
                 linuxRuntime.setInstallLogSink(null)
                 linuxRuntime.finishPackageOperation()
                 packageOperationRunning.set(false)
+            }
+        }
+    }
+
+    // ── Install wake lock ──
+
+    private val installOperations = java.util.concurrent.atomic.AtomicInteger(0)
+    private val installWakeLock by lazy {
+        (getSystemService(POWER_SERVICE) as android.os.PowerManager)
+            .newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "DroidDesk::Install")
+            .apply { setReferenceCounted(false) }
+    }
+
+    /**
+     * Runs a long setup/install step on a background thread while keeping the CPU awake and the
+     * screen on, so downloads and package installs are not paused when the phone would sleep.
+     */
+    private fun installThread(name: String, block: () -> Unit) = thread(name = name) {
+        if (installOperations.getAndIncrement() == 0) {
+            installWakeLock.acquire(2 * 60 * 60 * 1000L)
+            runOnUiThread { window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) }
+        }
+        try {
+            block()
+        } finally {
+            if (installOperations.decrementAndGet() == 0) {
+                if (installWakeLock.isHeld) installWakeLock.release()
+                runOnUiThread { window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) }
             }
         }
     }

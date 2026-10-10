@@ -8,6 +8,7 @@ import java.io.File
 object XfceMobileProfile {
     private const val TAG = "XfceMobileProfile"
     private const val PROFILE_MARKER = ".droiddesk-xfce-mobile-v10"
+    private const val MONOSPACE_FONT = "DejaVu Sans Mono"
     private const val WALLPAPER_ASSET = "droiddesk/ubuntu-touch-wallpaper.jpg"
 
     /** Height of the bottom launcher dock in X11 pixels; Android overlays sit above it. */
@@ -41,6 +42,8 @@ object XfceMobileProfile {
             )
             File(xfconfDir, "xfwm4.xml").writeText(windowManagerConfig())
             File(xfconfDir, "xsettings.xml").writeText(xsettingsConfig())
+            File(xfconfDir, "xfce4-terminal.xml").writeText(terminalConfig())
+            installMonospaceFontRule(homeDir)
             installPanelCss(homeDir)
             installAutoMaximize(homeDir)
 
@@ -199,9 +202,42 @@ object XfceMobileProfile {
             <property name="FontName" type="string" value="Sans 12"/>
             <property name="ButtonImages" type="bool" value="false"/>
             <property name="DialogsUseHeader" type="bool" value="true"/>
+            <property name="MonospaceFontName" type="string" value="$MONOSPACE_FONT 10"/>
           </property>
         </channel>
     """.trimIndent() + "\n"
+
+    private fun terminalConfig(): String = """
+        <?xml version="1.1" encoding="UTF-8"?>
+
+        <channel name="xfce4-terminal" version="1.0">
+          <property name="font-use-system" type="bool" value="false"/>
+          <property name="font-name" type="string" value="$MONOSPACE_FONT 10"/>
+        </channel>
+    """.trimIndent() + "\n"
+
+    /**
+     * The native runtime's fontconfig also scans Android's /system/fonts, so "monospace" can
+     * resolve to a proportional Android font and terminals draw every letter in a wide cell.
+     */
+    private fun installMonospaceFontRule(homeDir: File) {
+        File(homeDir, ".config/fontconfig/conf.d/60-droiddesk-monospace.conf").apply {
+            parentFile?.mkdirs()
+            writeText(
+                """
+                <?xml version="1.0"?>
+                <!DOCTYPE fontconfig SYSTEM "fonts.dtd">
+                <!-- Managed by DroidDesk -->
+                <fontconfig>
+                  <alias binding="strong">
+                    <family>monospace</family>
+                    <prefer><family>$MONOSPACE_FONT</family></prefer>
+                  </alias>
+                </fontconfig>
+                """.trimIndent() + "\n",
+            )
+        }
+    }
 
     private fun panelConfig(): String = """
         <?xml version="1.1" encoding="UTF-8"?>

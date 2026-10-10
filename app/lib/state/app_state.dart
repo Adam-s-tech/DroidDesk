@@ -93,8 +93,12 @@ class AppState extends ChangeNotifier {
 
   // ── Initialization ──
 
+  /// Re-reads the runtime status whenever the app returns to the foreground, since the
+  /// desktop can be stopped from outside Flutter (e.g. the notification's Stop action).
+  AppLifecycleListener? _lifecycleListener;
+
   Future<void> initialize() async {
-    await _loadThemeMode();
+    _lifecycleListener ??= AppLifecycleListener(onResume: refreshStatus);    await _loadThemeMode();
 
     // Set up progress callbacks
     DroidDeskPlatform.onDownloadProgress = (progress, status) {
@@ -185,6 +189,12 @@ class AppState extends ChangeNotifier {
       // Auto-start desktop when the app (launcher) boots up
       startLinux(mode: 'x11');
     }
+  }
+
+  @override
+  void dispose() {
+    _lifecycleListener?.dispose();
+    super.dispose();
   }
 
   // ── Theme Control ──

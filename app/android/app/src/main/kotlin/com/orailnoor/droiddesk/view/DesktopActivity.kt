@@ -26,9 +26,9 @@ import android.widget.ImageView
 import android.widget.ProgressBar
 import android.widget.TextView
 import android.view.Gravity
-import android.view.KeyEvent
-import android.os.SystemClock
+import android.content.Intent
 import android.content.res.ColorStateList
+import com.orailnoor.droiddesk.service.DroidDeskService
 import com.termux.x11.MainActivity as TermuxMainActivity
 import com.termux.x11.LorieView
 import com.orailnoor.droiddesk.runtime.LinuxRuntime
@@ -58,6 +58,7 @@ class DesktopActivity : Activity() {
     private var inputModeButton: Button? = null
     private var controlOverlay: LinearLayout? = null
     private var collapsedControl: Button? = null
+    private var extraKeysBar: ExtraKeysBar? = null
     private var surfaceCallback: SurfaceHolder.Callback? = null
     private var intentListenerThread: Thread? = null
     private var loadingOverlay: FrameLayout? = null
@@ -156,6 +157,35 @@ class DesktopActivity : Activity() {
     override fun onResume() {
         super.onResume()
         enableImmersiveMode()
+        restartSessionIfStopped()
+    }
+
+    private fun isSessionRunning(): Boolean =
+        if (sessionMode == "chroot") chrootRuntime.isRunning() else linuxRuntime.isRunning()
+
+    /**
+     * The session can be stopped while this screen stays in the back stack (notification Stop,
+     * in-app Stop). Coming back to it would only show the bare X server, so start Linux again.
+     */
+    private fun restartSessionIfStopped() {
+        if (!desktopRevealed || isSessionRunning()) return
+        Log.i(TAG, "Desktop session is no longer running; starting it again")
+        desktopRevealed = false
+        controlOverlay?.visibility = View.INVISIBLE
+        collapsedControl?.visibility = View.INVISIBLE
+        loadingOverlay?.apply {
+            alpha = 1f
+            visibility = View.VISIBLE
+            bringToFront()
+        }
+        estimatedLoadingSeconds = 30
+        loadingStartedAt = android.os.SystemClock.elapsedRealtime()
+        loadingMessageHandler.postDelayed(loadingMessageTicker, 5_000)
+        loadingMessageHandler.postDelayed(loadingEstimateTicker, 1_000)
+        // Stop also ended the keep-alive service.
+        startForegroundService(Intent(this, DroidDeskService::class.java))
+        shouldStartSession = true
+        startDesktopSessionIfRequested()
     }
 
     private fun startClipboardSync() {
@@ -312,32 +342,6 @@ class DesktopActivity : Activity() {
             minWidth = iconButtonWidth
         }
 
-        fun toggleButton(label: String, keyCode: Int) = controlButton(label).apply {
-            var active = false
-            setOnClickListener {
-                active = !active
-                backgroundTintList = ColorStateList.valueOf(
-                    if (active) Color.argb(255, 70, 130, 180) else Color.argb(220, 28, 38, 52)
-                )
-                val now = SystemClock.uptimeMillis()
-                val action = if (active) KeyEvent.ACTION_DOWN else KeyEvent.ACTION_UP
-                lorieView?.dispatchKeyEvent(KeyEvent(now, now, action, keyCode, 0))
-            }
-        }
-
-        fun clickButton(label: String, keyCode: Int) = controlButton(label).apply {
-            setOnClickListener {
-                val now = SystemClock.uptimeMillis()
-                lorieView?.dispatchKeyEvent(KeyEvent(now, now, KeyEvent.ACTION_DOWN, keyCode, 0))
-                lorieView?.dispatchKeyEvent(KeyEvent(now, now, KeyEvent.ACTION_UP, keyCode, 0))
-            }
-        }
-
-        val ctrlBtn = toggleButton("Ctrl", KeyEvent.KEYCODE_CTRL_LEFT)
-        val altBtn = toggleButton("Alt", KeyEvent.KEYCODE_ALT_LEFT)
-        val escBtn = clickButton("Esc", KeyEvent.KEYCODE_ESCAPE)
-        val tabBtn = clickButton("Tab", KeyEvent.KEYCODE_TAB)
-
         val keyboardButton = controlButton("Keyboard").apply {
             setOnClickListener { showKeyboard() }
         }
@@ -360,18 +364,6 @@ class DesktopActivity : Activity() {
             gravity = Gravity.CENTER_VERTICAL
             addView(dragHandle, LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.WRAP_CONTENT, buttonHeight,
-            ))
-            addView(escBtn, LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT, (42 * density).toInt(),
-            ))
-            addView(tabBtn, LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT, (42 * density).toInt(),
-            ))
-            addView(ctrlBtn, LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT, (42 * density).toInt(),
-            ))
-            addView(altBtn, LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT, (42 * density).toInt(),
             ))
             addView(keyboardButton, LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.WRAP_CONTENT, buttonHeight,
@@ -417,6 +409,51 @@ class DesktopActivity : Activity() {
             setControlsCollapsed(false)
         })
         collapsedControl?.bringToFront()
+        addExtraKeysBar()
+    }
+
+    /** Esc/Tab/Ctrl/Alt/arrow row that rides on top of the soft keyboard while it is open. */
+    private fun addExtraKeysBar() {
+        val bar = ExtraKeysBar(this) { lorieView }.apply { visibility = View.GONE }
+        extraKeysBar = bar
+        placeholder.addView(bar, FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT,
+            FrameLayout.LayoutParams.WRAP_CONTENT,
+            Gravity.BOTTOM,
+        ))
+        // Typing on the soft keyboard releases one-shot Ctrl/Alt (see LorieView's InputConnection).
+        TermuxMainActivity.getInstance().apply {
+            mExtraKeys = object : TermuxMainActivity.DummyExtraKeys() {
+                override fun unsetSpecialKeys() {
+                    runOnUiThread { extraKeysBar?.onKeyTyped() }
+                }
+            }
+            useTermuxEKBarBehaviour = true
+        }
+        placeholder.setOnApplyWindowInsetsListener { view, insets ->
+            updateExtraKeysBar(insets)
+            view.onApplyWindowInsets(insets)
+        }
+        placeholder.requestApplyInsets()
+    }
+
+    @Suppress("DEPRECATION")
+    private fun updateExtraKeysBar(insets: WindowInsets) {
+        val bar = extraKeysBar ?: return
+        val imeBottom = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            if (insets.isVisible(WindowInsets.Type.ime())) insets.getInsets(WindowInsets.Type.ime()).bottom else 0
+        } else {
+            insets.systemWindowInsetBottom
+        }
+        if (imeBottom > 0) {
+            (bar.layoutParams as FrameLayout.LayoutParams).bottomMargin = imeBottom
+            bar.visibility = View.VISIBLE
+            bar.requestLayout()
+            bar.bringToFront()
+        } else if (bar.visibility == View.VISIBLE) {
+            bar.releaseAll()
+            bar.visibility = View.GONE
+        }
     }
 
     private fun dragListener(target: View, onTap: (() -> Unit)? = null): View.OnTouchListener {
@@ -679,6 +716,12 @@ class DesktopActivity : Activity() {
     override fun onDestroy() {
         clipboardSync?.stop()
         clipboardSync = null
+        extraKeysBar?.releaseAll()
+        extraKeysBar = null
+        TermuxMainActivity.getInstance().apply {
+            mExtraKeys = null
+            useTermuxEKBarBehaviour = false
+        }
         loadingMessageHandler.removeCallbacks(loadingMessageTicker)
         loadingMessageHandler.removeCallbacks(loadingEstimateTicker)
         surfaceCallback?.let { callback -> lorieView?.holder?.removeCallback(callback) }

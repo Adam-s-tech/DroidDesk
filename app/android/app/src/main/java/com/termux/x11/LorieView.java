@@ -444,7 +444,14 @@ public class LorieView extends SurfaceView implements InputStub {
             // Android IMEs normally deliver the return key as an editor action,
             // not as committed text. X11 needs a real Return press/release.
             sendKey(KeyEvent.KEYCODE_ENTER);
+            unsetSpecialKeys();
             return true;
+        }
+
+        /** Lets the extra-keys bar release one-shot Ctrl/Alt after a key was typed. */
+        void unsetSpecialKeys() {
+            if (a.useTermuxEKBarBehaviour && a.mExtraKeys != null)
+                a.mExtraKeys.unsetSpecialKeys();
         }
 
         @Override public boolean deleteSurroundingText(int beforeLength, int afterLength) {
@@ -540,6 +547,7 @@ public class LorieView extends SurfaceView implements InputStub {
             // action. Treat a standalone newline as the X11 Return key.
             if ("\n".contentEquals(text) || "\r\n".contentEquals(text)) {
                 sendKey(KeyEvent.KEYCODE_ENTER);
+                unsetSpecialKeys();
                 currentComposingText = null;
                 return true;
             }
@@ -568,6 +576,8 @@ public class LorieView extends SurfaceView implements InputStub {
             // Route special IME and hardware keys through the same input state
             // machine used by Termux:X11. Fall back to direct native injection
             // while the controller is being attached.
+            if (event.getAction() == KeyEvent.ACTION_UP && !KeyEvent.isModifierKey(event.getKeyCode()))
+                unsetSpecialKeys();
             if (a.handleKey(event))
                 return true;
             if (event.getAction() == KeyEvent.ACTION_DOWN || event.getAction() == KeyEvent.ACTION_UP)
