@@ -1431,7 +1431,7 @@ class LinuxRuntime(private val context: Context) {
         onProgress?.invoke(0.46, "Installing $selectedDesktop desktop packages...")
 
         val desktopPackages =
-            "xfce4 xfce4-terminal xfce4-whiskermenu-plugin xfce4-notifyd thunar mousepad"
+            "xfce4 xfce4-terminal xfce4-whiskermenu-plugin xfce4-notifyd thunar mousepad devilspie2"
         if (!installPackageGroup("pkg install -y $desktopPackages")) {
             Log.e(TAG, "$selectedDesktop package install failed")
             return false
@@ -1783,6 +1783,15 @@ class LinuxRuntime(private val context: Context) {
         }
 
         if (selectedDesktop == "xfce4") {
+            // Older installs predate the auto-maximize helper; try once while upgrading the profile.
+            if (XfceMobileProfile.needsInstall(homeDir) && !File(binDir, "devilspie2").canExecute()) {
+                Log.i(TAG, "Installing the window fitting helper")
+                if (installPackageGroup("pkg install -y devilspie2")) {
+                    patchShebangs(force = true)
+                } else {
+                    Log.w(TAG, "Window fitting helper unavailable; windows will keep their default size")
+                }
+            }
             XfceMobileProfile.install(
                 context = context,
                 homeDir = homeDir.apply { mkdirs() },

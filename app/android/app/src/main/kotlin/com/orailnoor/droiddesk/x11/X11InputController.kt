@@ -8,7 +8,10 @@ import com.termux.x11.input.InputEventSender
 import com.termux.x11.input.TouchInputHandler
 
 /** Connects LorieView to the gesture/input implementation imported from Termux:X11. */
-class X11InputController(private val lorieView: LorieView) {
+class X11InputController(
+    private val lorieView: LorieView,
+    onThreeFingerTap: () -> Unit = {},
+) {
     private val inputHandler = TouchInputHandler(
         MainActivity.getInstance(),
         InputEventSender(lorieView),
@@ -20,6 +23,7 @@ class X11InputController(private val lorieView: LorieView) {
     init {
         setMode(mode)
         MainActivity.getInstance().setKeyHandler(inputHandler::sendKeyEvent)
+        TouchInputHandler.setThreeFingerTapListener { onThreeFingerTap() }
         lorieView.setCallback { width, height, transform ->
             inputHandler.handleInputTransformChanged(width, height, transform)
         }
@@ -45,6 +49,7 @@ class X11InputController(private val lorieView: LorieView) {
 
     fun dispose() {
         MainActivity.getInstance().setKeyHandler(null)
+        TouchInputHandler.setThreeFingerTapListener(null)
         lorieView.setOnTouchListener(null)
         lorieView.setOnGenericMotionListener(null)
         lorieView.setCallback(null)

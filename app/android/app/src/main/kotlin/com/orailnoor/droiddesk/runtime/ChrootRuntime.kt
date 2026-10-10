@@ -236,7 +236,7 @@ class ChrootRuntime(private val context: Context) {
                         "lxqt" -> "lxqt qterminal pcmanfm-qt featherpad"
                         "mate" -> "mate-desktop-environment mate-terminal"
                         "kde" -> "plasma-desktop konsole dolphin"
-                        else -> "xfce4 xfce4-terminal xfce4-whiskermenu-plugin thunar mousepad"
+                        else -> "xfce4 xfce4-terminal xfce4-whiskermenu-plugin thunar mousepad devilspie2"
                     }
                     if (execChroot(
                         "DEBIAN_FRONTEND=noninteractive TZ=Etc/UTC apt-get install -y --no-install-recommends $dePackages",
@@ -367,6 +367,10 @@ class ChrootRuntime(private val context: Context) {
             return
         }
 
+        // The profile is staged in app storage (see installChrootXfceMobileProfile), so its
+        // version marker lives there rather than in the root-owned chroot home.
+        val upgradingXfceProfile = desktopEnv == "xfce4" &&
+            XfceMobileProfile.needsInstall(File(context.cacheDir, "droiddesk-xfce-profile/root"))
         if (desktopEnv == "xfce4") installChrootXfceMobileProfile()
         if (desktopEnv == "xfce4") {
             runCatching {
@@ -389,6 +393,16 @@ class ChrootRuntime(private val context: Context) {
                 {},
             ) == 0
             if (!installed) Log.w(TAG, "Clipboard helper unavailable; clipboard sync will retry next session")
+        }
+
+        // Older installs predate the auto-maximize helper; try once while upgrading the profile.
+        if (upgradingXfceProfile && !File(rootfsDir, "usr/bin/devilspie2").canExecute()) {
+            Log.i(TAG, "Installing the window fitting helper")
+            val installed = execChroot(
+                "DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends devilspie2",
+                {},
+            ) == 0
+            if (!installed) Log.w(TAG, "Window fitting helper unavailable; windows will keep their default size")
         }
 
         val deBin = when (desktopEnv) {

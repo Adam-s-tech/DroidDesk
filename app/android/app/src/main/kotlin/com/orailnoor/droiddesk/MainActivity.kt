@@ -28,6 +28,8 @@ class MainActivity : FlutterActivity() {
     companion object {
         private const val CHANNEL = "com.droiddesk/core"
         private const val TAG = "MainActivity"
+        /** Sent by the "Open" notification action: show the desktop, resuming a running session. */
+        const val ACTION_OPEN_DESKTOP = "com.orailnoor.droiddesk.action.OPEN_DESKTOP"
         private val packageOperationRunning = java.util.concurrent.atomic.AtomicBoolean(false)
     }
 
@@ -86,8 +88,9 @@ class MainActivity : FlutterActivity() {
 
     /** Optional "Auto-Start Linux Desktop" setting: open the chroot desktop whenever the app starts. */
     private fun maybeAutoStartDesktop(launchIntent: Intent) {
-        // A Home press already launches the desktop through handleHomeLaunch.
-        if (launchIntent.action == Intent.ACTION_MAIN && launchIntent.hasCategory(Intent.CATEGORY_HOME)) return
+        // Home presses and the notification's Open action already launch the desktop.
+        val isHomeLaunch = launchIntent.action == Intent.ACTION_MAIN && launchIntent.hasCategory(Intent.CATEGORY_HOME)
+        if (isHomeLaunch || launchIntent.action == ACTION_OPEN_DESKTOP) return
         val prefs = getSharedPreferences("FlutterSharedPreferences", Context.MODE_PRIVATE)
         val autoStart = prefs.getBoolean("flutter.autoStartDesktop", false)
         if (autoStart && chrootRuntime.hasRoot() && chrootRuntime.isRootfsReady()) {
@@ -136,7 +139,17 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun handleHomeLaunch(homeIntent: Intent) {
-        if (homeIntent.action != Intent.ACTION_MAIN || !homeIntent.hasCategory(Intent.CATEGORY_HOME)) return
+        val isHomeLaunch = homeIntent.action == Intent.ACTION_MAIN && homeIntent.hasCategory(Intent.CATEGORY_HOME)
+        if (!isHomeLaunch && homeIntent.action != ACTION_OPEN_DESKTOP) return
+        if (homeIntent.action == ACTION_OPEN_DESKTOP && com.orailnoor.droiddesk.view.DesktopActivity.isOpen()) {
+            // Reuse the existing desktop screen; a second one would fight over the shared LorieView.
+            startActivity(
+                Intent(this, com.orailnoor.droiddesk.view.DesktopActivity::class.java)
+                    .addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT),
+            )
+            if (!isTaskRoot) finish()
+            return
+        }
 
         thread(name = "home-launch") {
             val rooted = chrootRuntime.hasRoot()
