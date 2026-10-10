@@ -30,7 +30,7 @@ class DroidTheme {
   // ── Core Light Colors ──
   static const Color lightBackground = Color(0xFFF2F2F7);
   static const Color lightSurface = Color(0xFFFFFFFF);
-  static const Color lightSurfaceLight = Color(0xFFF2F2F7);
+  static const Color lightSurfaceLight = Color(0xFFE5E5EA);
   static const Color lightSurfaceBorder = Color(0xFFD1D1D6);
   static const Color lightCardBg = Color(0xFFFFFFFF);
 
