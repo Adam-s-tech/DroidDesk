@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:droiddesk/services/platform_bridge.dart';
 import 'package:droiddesk/theme/droid_theme.dart';
+import 'package:droiddesk/widgets/droid_ui.dart';
 
 class DesktopToolsScreen extends StatefulWidget {
   const DesktopToolsScreen({super.key});
@@ -163,33 +164,13 @@ class _DesktopToolsScreenState extends State<DesktopToolsScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 12, 20, 0),
-                child: Row(
-                  children: [
-                    _CircleButton(
-                      icon: Icons.arrow_back_rounded,
-                      onTap: () => Navigator.of(context).maybePop(),
-                    ),
-                    const SizedBox(width: 14),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text('Desktop Tools', style: DroidTheme.headingMd),
-                          Text(
-                            'Dock apps and desktop backups',
-                            style: DroidTheme.bodySm,
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
+              const DroidPageHeader(
+                title: 'Desktop Tools',
+                subtitle: 'Dock apps and desktop backups',
               ),
               Padding(
                 padding: const EdgeInsets.fromLTRB(20, 20, 20, 8),
-                child: _SegmentedTabs(
+                child: DroidSegmentedTabs(
                   labels: const ['Dock', 'Backups'],
                   icons: const [
                     Icons.space_dashboard_rounded,
@@ -241,7 +222,7 @@ class _DesktopToolsScreenState extends State<DesktopToolsScreen> {
       children: [
         Row(
           children: [
-            const _SectionLabel('Pinned to dock'),
+            const DroidSectionLabel('Pinned to dock'),
             const Spacer(),
             if (_dockBusy)
               const Padding(
@@ -257,13 +238,13 @@ class _DesktopToolsScreenState extends State<DesktopToolsScreen> {
         ),
         const SizedBox(height: 10),
         if (_dockPackages.isEmpty)
-          const _EmptyCard(
+          const DroidEmptyCard(
             icon: Icons.push_pin_outlined,
             title: 'No apps pinned',
             subtitle: 'Add Android apps below to launch them from the Linux dock.',
           )
         else
-          _GroupCard(
+          DroidGroupCard(
             child: ReorderableListView.builder(
               shrinkWrap: true,
               physics: const NeverScrollableScrollPhysics(),
@@ -288,7 +269,7 @@ class _DesktopToolsScreenState extends State<DesktopToolsScreen> {
                   key: ValueKey(package),
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    if (index > 0) const _InsetDivider(),
+                    if (index > 0) const DroidInsetDivider(),
                     _AppRow(
                       package: package,
                       label: app?['label']?.toString() ?? package,
@@ -318,38 +299,12 @@ class _DesktopToolsScreenState extends State<DesktopToolsScreen> {
             ),
           ),
         const SizedBox(height: 28),
-        const _SectionLabel('Add an Android app'),
+        const DroidSectionLabel('Add an Android app'),
         const SizedBox(height: 10),
-        TextField(
+        DroidSearchField(
           controller: _dockSearchController,
+          hint: 'Search installed apps',
           onChanged: (_) => setState(() {}),
-          style: DroidTheme.bodyMd.copyWith(color: DroidTheme.textPrimary),
-          decoration: InputDecoration(
-            hintText: 'Search installed apps',
-            hintStyle: DroidTheme.bodyMd.copyWith(color: DroidTheme.textMuted),
-            prefixIcon: Icon(Icons.search_rounded, color: DroidTheme.textMuted),
-            suffixIcon: _dockSearchController.text.isEmpty
-                ? null
-                : IconButton(
-                    icon: Icon(Icons.cancel_rounded, color: DroidTheme.textDim),
-                    onPressed: () => setState(_dockSearchController.clear),
-                  ),
-            filled: true,
-            fillColor: DroidTheme.cardBg,
-            contentPadding: const EdgeInsets.symmetric(vertical: 14),
-            border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(DroidTheme.radiusMd),
-              borderSide: BorderSide(color: DroidTheme.surfaceBorder),
-            ),
-            enabledBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(DroidTheme.radiusMd),
-              borderSide: BorderSide(color: DroidTheme.surfaceBorder),
-            ),
-            focusedBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(DroidTheme.radiusMd),
-              borderSide: const BorderSide(color: DroidTheme.primary, width: 1.4),
-            ),
-          ),
         ),
         if (dockFull) ...[
           const SizedBox(height: 10),
@@ -360,7 +315,7 @@ class _DesktopToolsScreenState extends State<DesktopToolsScreen> {
         ],
         const SizedBox(height: 12),
         if (available.isEmpty)
-          _EmptyCard(
+          DroidEmptyCard(
             icon: Icons.search_off_rounded,
             title: 'No matching apps',
             subtitle: query.isEmpty
@@ -368,11 +323,11 @@ class _DesktopToolsScreenState extends State<DesktopToolsScreen> {
                 : 'Try a different name.',
           )
         else
-          _GroupCard(
+          DroidGroupCard(
             child: Column(
               children: [
                 for (var i = 0; i < available.length; i++) ...[
-                  if (i > 0) const _InsetDivider(),
+                  if (i > 0) const DroidInsetDivider(),
                   _AppRow(
                     package: available[i]['package'].toString(),
                     label: available[i]['label'].toString(),
@@ -400,7 +355,7 @@ class _DesktopToolsScreenState extends State<DesktopToolsScreen> {
     return ListView(
       padding: const EdgeInsets.fromLTRB(20, 12, 20, 32),
       children: [
-        _GroupCard(
+        DroidGroupCard(
           child: Padding(
             padding: const EdgeInsets.all(18),
             child: Column(
@@ -450,7 +405,7 @@ class _DesktopToolsScreenState extends State<DesktopToolsScreen> {
         const SizedBox(height: 28),
         Row(
           children: [
-            const _SectionLabel('Snapshots'),
+            const DroidSectionLabel('Snapshots'),
             const Spacer(),
             if (_snapshots.isNotEmpty)
               Text('${_snapshots.length}', style: DroidTheme.bodySm),
@@ -458,17 +413,17 @@ class _DesktopToolsScreenState extends State<DesktopToolsScreen> {
         ),
         const SizedBox(height: 10),
         if (_snapshots.isEmpty)
-          const _EmptyCard(
+          const DroidEmptyCard(
             icon: Icons.inventory_2_outlined,
             title: 'No snapshots yet',
             subtitle: 'Create one before big changes so you can roll back.',
           )
         else
-          _GroupCard(
+          DroidGroupCard(
             child: Column(
               children: [
                 for (var i = 0; i < _snapshots.length; i++) ...[
-                  if (i > 0) const _InsetDivider(),
+                  if (i > 0) const DroidInsetDivider(),
                   _snapshotRow(_snapshots[i]),
                 ],
               ],
@@ -565,79 +520,6 @@ class _DesktopToolsScreenState extends State<DesktopToolsScreen> {
 
 // ── Building blocks ──
 
-class _SectionLabel extends StatelessWidget {
-  final String text;
-
-  const _SectionLabel(this.text);
-
-  @override
-  Widget build(BuildContext context) => Padding(
-        padding: const EdgeInsets.only(left: 4),
-        child: Text(text.toUpperCase(), style: DroidTheme.label),
-      );
-}
-
-class _GroupCard extends StatelessWidget {
-  final Widget child;
-
-  const _GroupCard({required this.child});
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      decoration: BoxDecoration(
-        color: DroidTheme.cardBg,
-        borderRadius: BorderRadius.circular(DroidTheme.radiusLg),
-        border: Border.all(color: DroidTheme.surfaceBorder),
-      ),
-      clipBehavior: Clip.antiAlias,
-      child: Material(color: Colors.transparent, child: child),
-    );
-  }
-}
-
-class _InsetDivider extends StatelessWidget {
-  const _InsetDivider();
-
-  @override
-  Widget build(BuildContext context) => Divider(
-        height: 1,
-        thickness: 1,
-        indent: 70,
-        color: DroidTheme.surfaceBorder,
-      );
-}
-
-class _EmptyCard extends StatelessWidget {
-  final IconData icon;
-  final String title;
-  final String subtitle;
-
-  const _EmptyCard({
-    required this.icon,
-    required this.title,
-    required this.subtitle,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return _GroupCard(
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 28),
-        child: Column(
-          children: [
-            Icon(icon, size: 30, color: DroidTheme.textDim),
-            const SizedBox(height: 10),
-            Text(title, style: DroidTheme.headingSm),
-            const SizedBox(height: 4),
-            Text(subtitle, style: DroidTheme.bodySm, textAlign: TextAlign.center),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
 class _IconTile extends StatelessWidget {
   final IconData icon;
   final Color color;
@@ -682,30 +564,6 @@ class _CountPill extends StatelessWidget {
   }
 }
 
-class _CircleButton extends StatelessWidget {
-  final IconData icon;
-  final VoidCallback onTap;
-
-  const _CircleButton({required this.icon, required this.onTap});
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: DroidTheme.surfaceLight,
-      shape: const CircleBorder(),
-      child: InkWell(
-        customBorder: const CircleBorder(),
-        onTap: onTap,
-        child: SizedBox(
-          width: 42,
-          height: 42,
-          child: Icon(icon, color: DroidTheme.textPrimary, size: 21),
-        ),
-      ),
-    );
-  }
-}
-
 class _RoundIconButton extends StatelessWidget {
   final IconData icon;
   final Color color;
@@ -740,97 +598,6 @@ class _RoundIconButton extends StatelessWidget {
             ),
           ),
         ),
-      ),
-    );
-  }
-}
-
-/// iOS-style two-option segmented control.
-class _SegmentedTabs extends StatelessWidget {
-  final List<String> labels;
-  final List<IconData> icons;
-  final int selected;
-  final ValueChanged<int> onChanged;
-
-  const _SegmentedTabs({
-    required this.labels,
-    required this.icons,
-    required this.selected,
-    required this.onChanged,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      height: 44,
-      padding: const EdgeInsets.all(4),
-      decoration: BoxDecoration(
-        color: DroidTheme.surfaceLight,
-        borderRadius: BorderRadius.circular(14),
-      ),
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final segmentWidth = constraints.maxWidth / labels.length;
-          return Stack(
-            children: [
-              AnimatedPositioned(
-                duration: const Duration(milliseconds: 220),
-                curve: Curves.easeOutCubic,
-                left: segmentWidth * selected,
-                top: 0,
-                bottom: 0,
-                width: segmentWidth,
-                child: Container(
-                  decoration: BoxDecoration(
-                    color: DroidTheme.isDark ? DroidTheme.surfaceBorder : Colors.white,
-                    borderRadius: BorderRadius.circular(10),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withValues(alpha: 0.12),
-                        blurRadius: 6,
-                        offset: const Offset(0, 2),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  for (var i = 0; i < labels.length; i++)
-                    Expanded(
-                      child: GestureDetector(
-                        behavior: HitTestBehavior.opaque,
-                        onTap: () => onChanged(i),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(
-                              icons[i],
-                              size: 17,
-                              color: i == selected
-                                  ? DroidTheme.textPrimary
-                                  : DroidTheme.textMuted,
-                            ),
-                            const SizedBox(width: 6),
-                            Text(
-                              labels[i],
-                              style: DroidTheme.bodySm.copyWith(
-                                fontWeight: FontWeight.w600,
-                                color: i == selected
-                                    ? DroidTheme.textPrimary
-                                    : DroidTheme.textMuted,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                ],
-              ),
-            ],
-          );
-        },
       ),
     );
   }

@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:droiddesk/services/platform_bridge.dart';
 import 'package:droiddesk/state/app_state.dart';
 import 'package:droiddesk/theme/droid_theme.dart';
+import 'package:droiddesk/widgets/droid_ui.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -13,8 +14,7 @@ class AppCatalogScreen extends StatefulWidget {
   State<AppCatalogScreen> createState() => _AppCatalogScreenState();
 }
 
-class _AppCatalogScreenState extends State<AppCatalogScreen>
-    with SingleTickerProviderStateMixin {
+class _AppCatalogScreenState extends State<AppCatalogScreen> {
   static const _featured = [
     _FeaturedApp(
       'firefox',
@@ -81,7 +81,7 @@ class _AppCatalogScreenState extends State<AppCatalogScreen>
     ),
   ];
 
-  late final TabController _tabs;
+  int _tab = 0;
   final _searchController = TextEditingController();
   Timer? _searchDebounce;
   List<_PackageItem> _searchResults = const [];
@@ -101,12 +101,6 @@ class _AppCatalogScreenState extends State<AppCatalogScreen>
   @override
   void initState() {
     super.initState();
-    _tabs = TabController(length: 3, vsync: this);
-    _tabs.addListener(() {
-      if (!_tabs.indexIsChanging && _tabs.index == 2) {
-        _loadInstalled();
-      }
-    });
     DroidDeskPlatform.onPackageOperationProgress = _onProgress;
     DroidDeskPlatform.onPackageOperationLog = _onLog;
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -123,7 +117,6 @@ class _AppCatalogScreenState extends State<AppCatalogScreen>
     }
     _searchDebounce?.cancel();
     _searchController.dispose();
-    _tabs.dispose();
     DroidDeskPlatform.onPackageOperationProgress = null;
     DroidDeskPlatform.onPackageOperationLog = null;
     super.dispose();
@@ -268,30 +261,62 @@ class _AppCatalogScreenState extends State<AppCatalogScreen>
     );
   }
 
+  void _selectTab(int index) {
+    setState(() => _tab = index);
+    if (index == 2) _loadInstalled();
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Linux App Store'),
-        bottom: TabBar(
-          controller: _tabs,
-          tabs: const [
-            Tab(icon: Icon(Icons.auto_awesome_rounded), text: 'Featured'),
-            Tab(icon: Icon(Icons.search_rounded), text: 'Browse'),
-            Tab(icon: Icon(Icons.download_done_rounded), text: 'Installed'),
-          ],
-        ),
-      ),
       body: Container(
-        decoration: BoxDecoration(
-          gradient: DroidTheme.backgroundGradient,
-        ),
-        child: TabBarView(
-          controller: _tabs,
-          children: [_featuredView(), _browseView(), _installedView()],
+        decoration: BoxDecoration(gradient: DroidTheme.backgroundGradient),
+        child: SafeArea(
+          bottom: false,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const DroidPageHeader(
+                title: 'Linux App Store',
+                subtitle: 'Apps and tools for your desktop',
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 20, 20, 8),
+                child: DroidSegmentedTabs(
+                  labels: const ['Featured', 'Browse', 'Installed'],
+                  icons: const [
+                    Icons.auto_awesome_rounded,
+                    Icons.search_rounded,
+                    Icons.check_circle_outline_rounded,
+                  ],
+                  selected: _tab,
+                  onChanged: _selectTab,
+                ),
+              ),
+              Expanded(
+                child: AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 200),
+                  child: KeyedSubtree(
+                    key: ValueKey(_tab),
+                    child: switch (_tab) {
+                      0 => _featuredView(),
+                      1 => _browseView(),
+                      _ => _installedView(),
+                    },
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
-      bottomNavigationBar: _activePackage == null ? null : _operationPanel(),
+      bottomNavigationBar: AnimatedSize(
+        duration: const Duration(milliseconds: 220),
+        curve: Curves.easeOutCubic,
+        child: _activePackage == null
+            ? const SizedBox(width: double.infinity)
+            : _operationPanel(),
+      ),
     );
   }
 
@@ -309,33 +334,96 @@ class _AppCatalogScreenState extends State<AppCatalogScreen>
           optional: true,
         ),
     ];
+    final hero = apps.first;
+    final rest = apps.skip(1).toList();
+
+    _PackageItem itemFor(_FeaturedApp app) => _PackageItem(
+          name: app.packageName,
+          description: app.description,
+          installed: app.optional
+              ? state.optionalApps[app.packageName] == true
+              : _installedNames.contains(app.packageName),
+        );
+    Future<void> Function()? installerFor(_FeaturedApp app) => app.optional
+        ? () => state.installOptionalApp(app.packageName)
+        : null;
+
     return ListView(
-      padding: const EdgeInsets.fromLTRB(20, 18, 20, 32),
+      padding: const EdgeInsets.fromLTRB(20, 12, 20, 32),
       children: [
-        Text('Popular Linux applications', style: DroidTheme.headingMd),
-        const SizedBox(height: 5),
-        Text(
-          'Hand-picked apps tested for DroidDesk.',
-          style: DroidTheme.bodyMd,
-        ),
-        const SizedBox(height: 18),
-        for (final app in apps) ...[
-          _packageCard(
-            _PackageItem(
-              name: app.packageName,
-              description: app.description,
-              installed: app.optional
-                  ? state.optionalApps[app.packageName] == true
-                  : _installedNames.contains(app.packageName),
-            ),
-            featured: app,
-            onInstall: app.optional
-                ? () => state.installOptionalApp(app.packageName)
-                : null,
+        _heroCard(hero, itemFor(hero), installerFor(hero)),
+        const SizedBox(height: 26),
+        const DroidSectionLabel('Popular apps'),
+        const SizedBox(height: 10),
+        DroidGroupCard(
+          child: Column(
+            children: [
+              for (var i = 0; i < rest.length; i++) ...[
+                if (i > 0) const DroidInsetDivider(indent: 76),
+                _packageRow(
+                  itemFor(rest[i]),
+                  featured: rest[i],
+                  onInstall: installerFor(rest[i]),
+                ),
+              ],
+            ],
           ),
-          const SizedBox(height: 10),
-        ],
+        ),
       ],
+    );
+  }
+
+  /// Large spotlight card for the first featured app.
+  Widget _heroCard(
+    _FeaturedApp app,
+    _PackageItem item,
+    Future<void> Function()? onInstall,
+  ) {
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(DroidTheme.radiusXl),
+        gradient: LinearGradient(
+          colors: [
+            app.color.withValues(alpha: 0.30),
+            app.color.withValues(alpha: 0.08),
+          ],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        border: Border.all(color: app.color.withValues(alpha: 0.30)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'FEATURED',
+            style: DroidTheme.label.copyWith(color: app.color, letterSpacing: 1),
+          ),
+          const SizedBox(height: 14),
+          Row(
+            children: [
+              _appTile(app.icon, app.color, size: 60),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(app.name, style: DroidTheme.headingMd),
+                    const SizedBox(height: 3),
+                    Text(app.description, style: DroidTheme.bodySm),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          Align(
+            alignment: Alignment.centerRight,
+            child: _actionButton(item, onInstall: onInstall, prominent: true),
+          ),
+        ],
+      ),
     );
   }
 
@@ -343,37 +431,44 @@ class _AppCatalogScreenState extends State<AppCatalogScreen>
     return Column(
       children: [
         Padding(
-          padding: const EdgeInsets.fromLTRB(18, 16, 18, 8),
-          child: TextField(
+          padding: const EdgeInsets.fromLTRB(20, 12, 20, 10),
+          child: DroidSearchField(
             controller: _searchController,
-            onChanged: _queueSearch,
-            decoration: InputDecoration(
-              hintText: 'Search packages, apps, and tools',
-              prefixIcon: const Icon(Icons.search_rounded),
-              suffixIcon: _searching
-                  ? const Padding(
-                      padding: EdgeInsets.all(14),
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : null,
-              filled: true,
-              fillColor: DroidTheme.cardBg,
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(14),
-                borderSide: BorderSide.none,
-              ),
-            ),
+            hint: 'Search packages, apps and tools',
+            onChanged: (value) {
+              setState(() {});
+              _queueSearch(value);
+            },
+            busy: _searching,
           ),
         ),
         Expanded(
           child: _searchResults.isEmpty && !_searching
-              ? const Center(child: Text('No matching packages found'))
-              : ListView.separated(
-                  padding: const EdgeInsets.fromLTRB(18, 8, 18, 28),
-                  itemCount: _searchResults.length,
-                  separatorBuilder: (_, _) => const SizedBox(height: 9),
-                  itemBuilder: (_, index) =>
-                      _packageCard(_searchResults[index]),
+              ? ListView(
+                  padding: const EdgeInsets.fromLTRB(20, 8, 20, 28),
+                  children: const [
+                    DroidEmptyCard(
+                      icon: Icons.search_off_rounded,
+                      title: 'No matching packages',
+                      subtitle: 'Try another name or keyword.',
+                    ),
+                  ],
+                )
+              : ListView(
+                  padding: const EdgeInsets.fromLTRB(20, 8, 20, 28),
+                  children: [
+                    if (_searchResults.isNotEmpty)
+                      DroidGroupCard(
+                        child: Column(
+                          children: [
+                            for (var i = 0; i < _searchResults.length; i++) ...[
+                              if (i > 0) const DroidInsetDivider(indent: 76),
+                              _packageRow(_searchResults[i]),
+                            ],
+                          ],
+                        ),
+                      ),
+                  ],
                 ),
         ),
       ],
@@ -381,127 +476,226 @@ class _AppCatalogScreenState extends State<AppCatalogScreen>
   }
 
   Widget _installedView() {
-    if (_loadingInstalled) {
+    if (_loadingInstalled && _installedPackages.isEmpty) {
       return const Center(child: CircularProgressIndicator());
     }
     return RefreshIndicator(
       onRefresh: _loadInstalled,
-      child: _installedPackages.isEmpty
-          ? ListView(
-              children: const [
-                SizedBox(height: 220),
-                Center(child: Text('No packages installed yet')),
-              ],
-            )
-          : ListView.separated(
-              padding: const EdgeInsets.fromLTRB(18, 16, 18, 28),
-              itemCount: _installedPackages.length,
-              separatorBuilder: (_, _) => const SizedBox(height: 9),
-              itemBuilder: (_, index) =>
-                  _packageCard(_installedPackages[index], allowRemove: true),
-            ),
-    );
-  }
-
-  Widget _packageCard(
-    _PackageItem package, {
-    _FeaturedApp? featured,
-    bool allowRemove = false,
-    Future<void> Function()? onInstall,
-  }) {
-    final installed =
-        package.installed || _installedNames.contains(package.name);
-    final busy = _activePackage != null;
-    final active = _activePackage == package.name;
-    final color = featured?.color ?? _categoryColor(package.section);
-    return Container(
-      padding: const EdgeInsets.all(15),
-      decoration: BoxDecoration(
-        color: DroidTheme.cardBg,
-        borderRadius: BorderRadius.circular(DroidTheme.radiusMd),
-        border: Border.all(
-          color: installed
-              ? DroidTheme.success.withValues(alpha: .4)
-              : DroidTheme.surfaceBorder,
-        ),
-      ),
-      child: Row(
+      child: ListView(
+        padding: const EdgeInsets.fromLTRB(20, 12, 20, 28),
         children: [
-          Container(
-            width: 48,
-            height: 48,
-            decoration: BoxDecoration(
-              color: color.withValues(alpha: .14),
-              borderRadius: BorderRadius.circular(13),
-            ),
-            child: Icon(
-              featured?.icon ?? _categoryIcon(package.section, package.gui),
-              color: color,
-            ),
+          Row(
+            children: [
+              const DroidSectionLabel('Installed packages'),
+              const Spacer(),
+              if (_installedPackages.isNotEmpty)
+                Text('${_installedPackages.length}', style: DroidTheme.bodySm),
+            ],
           ),
-          const SizedBox(width: 13),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  featured?.name ?? package.displayName,
-                  style: DroidTheme.headingSm,
-                ),
-                const SizedBox(height: 3),
-                Text(
-                  package.description.isEmpty
-                      ? 'Linux package'
-                      : package.description,
-                  style: DroidTheme.bodySm,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                const SizedBox(height: 5),
-                Text(
-                  [
-                    if (package.version.isNotEmpty) package.version,
-                    package.gui ? 'GUI app' : package.section,
-                  ].where((e) => e.isNotEmpty).join(' · '),
-                  style: DroidTheme.monoSm,
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 8),
-          if (active)
-            const SizedBox(
-              width: 25,
-              height: 25,
-              child: CircularProgressIndicator(strokeWidth: 2.5),
+          const SizedBox(height: 10),
+          if (_installedPackages.isEmpty)
+            const DroidEmptyCard(
+              icon: Icons.inventory_2_outlined,
+              title: 'Nothing installed yet',
+              subtitle: 'Apps you install from Featured or Browse show up here.',
             )
-          else if (installed && allowRemove && package.removable)
-            IconButton(
-              onPressed: busy ? null : () => _remove(package),
-              icon: const Icon(Icons.delete_outline_rounded),
-              tooltip: 'Remove',
-            )
-          else if (installed)
-            const Icon(Icons.check_circle_rounded, color: DroidTheme.success)
           else
-            FilledButton(
-              onPressed: busy
-                  ? null
-                  : () async {
-                      if (onInstall != null) {
-                        await onInstall();
-                        if (mounted) setState(() {});
-                      } else {
-                        await _install(package.name);
-                      }
-                    },
-              child: const Text('Install'),
+            DroidGroupCard(
+              child: Column(
+                children: [
+                  for (var i = 0; i < _installedPackages.length; i++) ...[
+                    if (i > 0) const DroidInsetDivider(indent: 76),
+                    _packageRow(_installedPackages[i], allowRemove: true),
+                  ],
+                ],
+              ),
             ),
         ],
       ),
     );
   }
 
+  Widget _appTile(IconData icon, Color color, {double size = 46}) {
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [color.withValues(alpha: 0.24), color.withValues(alpha: 0.12)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(size * 0.28),
+      ),
+      child: Icon(icon, color: color, size: size * 0.5),
+    );
+  }
+
+  /// One package inside a grouped card: icon, name, description, meta and action.
+  Widget _packageRow(
+    _PackageItem package, {
+    _FeaturedApp? featured,
+    bool allowRemove = false,
+    Future<void> Function()? onInstall,
+  }) {
+    final color = featured?.color ?? _categoryColor(package.section);
+    final meta = [
+      if (package.version.isNotEmpty) package.version,
+      package.gui ? 'GUI app' : package.section,
+    ].where((e) => e.isNotEmpty).join(' · ');
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(14, 12, 12, 12),
+      child: Row(
+        children: [
+          _appTile(
+            featured?.icon ?? _categoryIcon(package.section, package.gui),
+            color,
+          ),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  featured?.name ?? package.displayName,
+                  style: DroidTheme.headingSm.copyWith(fontSize: 15),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  package.description.isEmpty
+                      ? 'Linux package'
+                      : package.description,
+                  style: DroidTheme.bodySm,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                if (meta.isNotEmpty && featured == null) ...[
+                  const SizedBox(height: 3),
+                  Text(meta, style: DroidTheme.monoSm),
+                ],
+              ],
+            ),
+          ),
+          const SizedBox(width: 10),
+          _actionButton(package, allowRemove: allowRemove, onInstall: onInstall),
+        ],
+      ),
+    );
+  }
+
+  /// App Store style capsule: Get / progress / Installed / Remove.
+  Widget _actionButton(
+    _PackageItem package, {
+    bool allowRemove = false,
+    Future<void> Function()? onInstall,
+    bool prominent = false,
+  }) {
+    final installed =
+        package.installed || _installedNames.contains(package.name);
+    final busy = _activePackage != null;
+    final active = _activePackage == package.name;
+
+    if (active) {
+      return SizedBox(
+        width: 74,
+        height: 32,
+        child: Center(
+          child: SizedBox(
+            width: 24,
+            height: 24,
+            child: CircularProgressIndicator(
+              strokeWidth: 2.6,
+              value: _operationProgress > 0 ? _operationProgress : null,
+            ),
+          ),
+        ),
+      );
+    }
+    if (installed && allowRemove && package.removable) {
+      return _capsule(
+        label: 'Remove',
+        color: DroidTheme.error,
+        onTap: busy ? null : () => _remove(package),
+      );
+    }
+    if (installed) {
+      return Container(
+        padding: const EdgeInsets.fromLTRB(9, 6, 12, 6),
+        decoration: BoxDecoration(
+          color: DroidTheme.accent.withValues(alpha: 0.14),
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.check_rounded, size: 15, color: DroidTheme.accent),
+            const SizedBox(width: 4),
+            Text(
+              'Installed',
+              style: DroidTheme.label.copyWith(
+                color: DroidTheme.accent,
+                letterSpacing: 0.1,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+    return _capsule(
+      label: 'Get',
+      color: DroidTheme.primary,
+      filled: prominent,
+      onTap: busy
+          ? null
+          : () async {
+              if (onInstall != null) {
+                await onInstall();
+                if (mounted) setState(() {});
+              } else {
+                await _install(package.name);
+              }
+            },
+    );
+  }
+
+  Widget _capsule({
+    required String label,
+    required Color color,
+    required VoidCallback? onTap,
+    bool filled = false,
+  }) {
+    final enabled = onTap != null;
+    return Material(
+      color: filled
+          ? color.withValues(alpha: enabled ? 1 : 0.4)
+          : color.withValues(alpha: enabled ? 0.14 : 0.06),
+      borderRadius: BorderRadius.circular(20),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(20),
+        onTap: onTap,
+        child: Container(
+          constraints: const BoxConstraints(minWidth: 74),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 7),
+          alignment: Alignment.center,
+          child: Text(
+            label.toUpperCase(),
+            style: DroidTheme.label.copyWith(
+              fontSize: 13,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 0.4,
+              color: filled
+                  ? Colors.white
+                  : color.withValues(alpha: enabled ? 1 : 0.4),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Floating progress card shown while a package is being installed or removed.
   Widget _operationPanel() {
     final clean = _operationLog.replaceAll(
       RegExp(r'\x1B\[[0-?]*[ -/]*[@-~]'),
@@ -516,14 +710,23 @@ class _AppCatalogScreenState extends State<AppCatalogScreen>
         .toList()
         .reversed
         .join('\n');
-    return Container(
-      padding: const EdgeInsets.fromLTRB(18, 12, 18, 14),
-      decoration: BoxDecoration(
-        color: DroidTheme.cardBg,
-        border: Border(top: BorderSide(color: DroidTheme.surfaceBorder)),
-      ),
-      child: SafeArea(
-        top: false,
+    return SafeArea(
+      top: false,
+      child: Container(
+        margin: const EdgeInsets.fromLTRB(14, 0, 14, 12),
+        padding: const EdgeInsets.fromLTRB(16, 14, 10, 14),
+        decoration: BoxDecoration(
+          color: DroidTheme.surfaceLight,
+          borderRadius: BorderRadius.circular(DroidTheme.radiusLg),
+          border: Border.all(color: DroidTheme.surfaceBorder),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.18),
+              blurRadius: 18,
+              offset: const Offset(0, 6),
+            ),
+          ],
+        ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -531,40 +734,46 @@ class _AppCatalogScreenState extends State<AppCatalogScreen>
             Row(
               children: [
                 Expanded(
-                  child: Text(
-                    _operationStatus,
-                    style: DroidTheme.headingSm,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        _operationStatus,
+                        style: DroidTheme.headingSm.copyWith(fontSize: 15),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        _operationProgress > 0
+                            ? '${(_operationProgress * 100).round()}% complete'
+                            : 'Starting…',
+                        style: DroidTheme.bodySm,
+                      ),
+                    ],
                   ),
                 ),
-                Text(
-                  '${(_operationProgress * 100).round()}%',
-                  style: DroidTheme.monoSm,
+                TextButton(
+                  onPressed: _cancelling ? null : _cancelOperation,
+                  style: TextButton.styleFrom(foregroundColor: DroidTheme.error),
+                  child: Text(_cancelling ? 'Cancelling…' : 'Cancel'),
                 ),
               ],
             ),
-            const SizedBox(height: 8),
-            LinearProgressIndicator(
-              value: _operationProgress > 0 ? _operationProgress : null,
-            ),
             const SizedBox(height: 10),
-            Align(
-              alignment: Alignment.centerRight,
-              child: OutlinedButton.icon(
-                onPressed: _cancelling ? null : _cancelOperation,
-                icon: _cancelling
-                    ? const SizedBox(
-                        width: 15,
-                        height: 15,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Icon(Icons.close_rounded, size: 18),
-                label: Text(_cancelling ? 'Cancelling' : 'Cancel installation'),
+            Padding(
+              padding: const EdgeInsets.only(right: 6),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(4),
+                child: LinearProgressIndicator(
+                  minHeight: 6,
+                  backgroundColor: DroidTheme.surfaceBorder,
+                  value: _operationProgress > 0 ? _operationProgress : null,
+                ),
               ),
             ),
             if (tail.isNotEmpty) ...[
-              const SizedBox(height: 8),
+              const SizedBox(height: 10),
               Text(
                 tail,
                 style: DroidTheme.monoSm,
