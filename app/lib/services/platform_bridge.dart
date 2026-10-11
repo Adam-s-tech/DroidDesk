@@ -223,6 +223,19 @@ class DroidDeskPlatform {
     return _channel.invokeMethod<Uint8List>('getAppIcon', {'package': packageName});
   }
 
+  /// Real icon for a Linux package: `{'format': 'png'|'svg', 'bytes': Uint8List}` or null.
+  /// [iconNames] are extra icon-theme names to try before the package name.
+  static Future<Map<String, dynamic>?> getLinuxAppIcon(
+    String packageName, {
+    List<String> iconNames = const [],
+  }) async {
+    final result = await _channel.invokeMethod<Map<dynamic, dynamic>>(
+      'getLinuxAppIcon',
+      {'package': packageName, 'iconNames': iconNames},
+    );
+    return result == null ? null : Map<String, dynamic>.from(result);
+  }
+
   static Future<List<String>> getDockPackages() async {
     final result = await _channel.invokeMethod<List<dynamic>>(
       'getDockPackages',

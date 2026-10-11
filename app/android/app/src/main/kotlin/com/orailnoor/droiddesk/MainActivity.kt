@@ -33,6 +33,9 @@ class MainActivity : FlutterActivity() {
         private val packageOperationRunning = java.util.concurrent.atomic.AtomicBoolean(false)
     }
 
+    /** Icon lookups may download from the network; cap concurrency so a long list doesn't time out. */
+    private val linuxIconExecutor = java.util.concurrent.Executors.newFixedThreadPool(4)
+
     private lateinit var linuxRuntime: LinuxRuntime
     private lateinit var chrootRuntime: ChrootRuntime
     private lateinit var desktopIntegration: DesktopIntegration
@@ -550,6 +553,21 @@ class MainActivity : FlutterActivity() {
                 }
 
                 "getAndroidApps" -> result.success(AndroidAppBridge.listApps(this))
+                "getLinuxAppIcon" -> {
+                    val packageName = call.argument<String>("package") ?: ""
+                    val iconNames = call.argument<List<String>>("iconNames").orEmpty()
+                    linuxIconExecutor.execute {
+                        // The native runtime lives in filesDir/usr; a chroot rootfs is root-owned,
+                        // so rooted devices rely on the Papirus fallback.
+                        val prefix = java.io.File(filesDir, "usr").takeIf { it.isDirectory }
+                        val icon = runCatching {
+                            com.orailnoor.droiddesk.runtime.LinuxAppIcons.find(
+                                this@MainActivity, prefix, packageName, iconNames,
+                            )
+                        }.getOrNull()
+                        runOnUiThread { result.success(icon) }
+                    }
+                }
                 "getAppIcon" -> {
                     val packageName = call.argument<String>("package") ?: ""
                     thread(name = "app-icon") {

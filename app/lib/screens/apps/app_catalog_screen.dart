@@ -1,10 +1,12 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:droiddesk/services/platform_bridge.dart';
 import 'package:droiddesk/state/app_state.dart';
 import 'package:droiddesk/theme/droid_theme.dart';
 import 'package:droiddesk/widgets/droid_ui.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 import 'package:provider/provider.dart';
 
 class AppCatalogScreen extends StatefulWidget {
@@ -22,6 +24,7 @@ class _AppCatalogScreenState extends State<AppCatalogScreen> {
       'Fast, private desktop web browser.',
       Icons.public_rounded,
       Color(0xFFFF7139),
+      iconNames: ['firefox'],
     ),
     _FeaturedApp(
       'code-oss',
@@ -29,6 +32,7 @@ class _AppCatalogScreenState extends State<AppCatalogScreen> {
       'Powerful desktop code editor and IDE.',
       Icons.code_rounded,
       Color(0xFF23A8F2),
+      iconNames: ['vscode', 'code-oss'],
     ),
     _FeaturedApp(
       'libreoffice',
@@ -36,6 +40,7 @@ class _AppCatalogScreenState extends State<AppCatalogScreen> {
       'Documents, spreadsheets, and presentations.',
       Icons.description_rounded,
       Color(0xFF18A303),
+      iconNames: ['libreoffice-startcenter', 'libreoffice-main'],
     ),
     _FeaturedApp(
       'gimp',
@@ -43,6 +48,7 @@ class _AppCatalogScreenState extends State<AppCatalogScreen> {
       'Professional image editing and design tools.',
       Icons.brush_rounded,
       Color(0xFF9A7654),
+      iconNames: ['gimp'],
     ),
     _FeaturedApp(
       'blender',
@@ -50,6 +56,7 @@ class _AppCatalogScreenState extends State<AppCatalogScreen> {
       'Complete open-source 3D creation suite.',
       Icons.view_in_ar_rounded,
       Color(0xFFF5792A),
+      iconNames: ['blender'],
     ),
     _FeaturedApp(
       'vlc',
@@ -57,6 +64,7 @@ class _AppCatalogScreenState extends State<AppCatalogScreen> {
       'Play almost every audio and video format.',
       Icons.play_circle_rounded,
       Color(0xFFFF8800),
+      iconNames: ['vlc'],
     ),
     _FeaturedApp(
       'nodejs',
@@ -64,6 +72,7 @@ class _AppCatalogScreenState extends State<AppCatalogScreen> {
       'JavaScript runtime and package manager.',
       Icons.javascript_rounded,
       Color(0xFF68A063),
+      iconNames: [],
     ),
     _FeaturedApp(
       'python',
@@ -71,6 +80,7 @@ class _AppCatalogScreenState extends State<AppCatalogScreen> {
       'Popular programming language and tools.',
       Icons.terminal_rounded,
       Color(0xFFFFD43B),
+      iconNames: ['python'],
     ),
     _FeaturedApp(
       'imagemagick',
@@ -78,6 +88,7 @@ class _AppCatalogScreenState extends State<AppCatalogScreen> {
       'Image conversion and processing toolkit.',
       Icons.image_rounded,
       DroidTheme.primaryLight,
+      iconNames: ['display-im6.q16'],
     ),
   ];
 
@@ -332,6 +343,7 @@ class _AppCatalogScreenState extends State<AppCatalogScreen> {
           Icons.inventory_2_rounded,
           Color(0xFFD70A53),
           optional: true,
+          iconNames: ['distributor-logo-debian'],
         ),
     ];
     final hero = apps.first;
@@ -403,7 +415,12 @@ class _AppCatalogScreenState extends State<AppCatalogScreen> {
           const SizedBox(height: 14),
           Row(
             children: [
-              _appTile(app.icon, app.color, size: 60),
+              _LinuxAppIcon(
+                package: app.packageName,
+                iconNames: app.iconNames,
+                fallback: _appTile(app.icon, app.color, size: 60),
+                size: 60,
+              ),
               const SizedBox(width: 16),
               Expanded(
                 child: Column(
@@ -418,10 +435,7 @@ class _AppCatalogScreenState extends State<AppCatalogScreen> {
             ],
           ),
           const SizedBox(height: 16),
-          Align(
-            alignment: Alignment.centerRight,
-            child: _actionButton(item, onInstall: onInstall, prominent: true),
-          ),
+          _actionButton(item, onInstall: onInstall, prominent: true),
         ],
       ),
     );
@@ -547,9 +561,13 @@ class _AppCatalogScreenState extends State<AppCatalogScreen> {
       padding: const EdgeInsets.fromLTRB(14, 12, 12, 12),
       child: Row(
         children: [
-          _appTile(
-            featured?.icon ?? _categoryIcon(package.section, package.gui),
-            color,
+          _LinuxAppIcon(
+            package: package.name,
+            iconNames: featured?.iconNames ?? const [],
+            fallback: _appTile(
+              featured?.icon ?? _categoryIcon(package.section, package.gui),
+              color,
+            ),
           ),
           const SizedBox(width: 16),
           Expanded(
@@ -598,16 +616,67 @@ class _AppCatalogScreenState extends State<AppCatalogScreen> {
     final active = _activePackage == package.name;
 
     if (active) {
+      final value = _operationProgress > 0 ? _operationProgress : null;
+      final percent = '${(_operationProgress * 100).round()}%';
+      if (prominent) {
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                Text(
+                  _cancelling ? 'Cancelling…' : 'Installing…',
+                  style: DroidTheme.bodySm.copyWith(fontWeight: FontWeight.w600),
+                ),
+                const Spacer(),
+                Text(
+                  value == null ? '' : percent,
+                  style: DroidTheme.bodySm.copyWith(
+                    fontWeight: FontWeight.w700,
+                    color: DroidTheme.primary,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(6),
+              child: LinearProgressIndicator(
+                minHeight: 8,
+                value: value,
+                backgroundColor: DroidTheme.surfaceBorder,
+              ),
+            ),
+          ],
+        );
+      }
       return SizedBox(
         width: 74,
-        height: 32,
+        height: 40,
         child: Center(
           child: SizedBox(
-            width: 24,
-            height: 24,
-            child: CircularProgressIndicator(
-              strokeWidth: 2.6,
-              value: _operationProgress > 0 ? _operationProgress : null,
+            width: 40,
+            height: 40,
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                SizedBox.expand(
+                  child: CircularProgressIndicator(
+                    strokeWidth: 3,
+                    value: value,
+                    backgroundColor: DroidTheme.surfaceBorder,
+                  ),
+                ),
+                if (value != null)
+                  Text(
+                    percent,
+                    style: DroidTheme.label.copyWith(
+                      fontSize: 10,
+                      letterSpacing: 0,
+                      color: DroidTheme.primary,
+                    ),
+                  ),
+              ],
             ),
           ),
         ),
@@ -620,12 +689,39 @@ class _AppCatalogScreenState extends State<AppCatalogScreen> {
         onTap: busy ? null : () => _remove(package),
       );
     }
+    if (installed && prominent) {
+      return Container(
+        height: 46,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: DroidTheme.accent,
+          borderRadius: BorderRadius.circular(DroidTheme.radiusMd),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.check_circle_rounded, size: 18, color: Colors.white),
+            const SizedBox(width: 6),
+            Text(
+              'INSTALLED',
+              style: DroidTheme.label.copyWith(
+                fontSize: 13,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 0.4,
+                color: Colors.white,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
     if (installed) {
       return Container(
         padding: const EdgeInsets.fromLTRB(9, 6, 12, 6),
         decoration: BoxDecoration(
-          color: DroidTheme.accent.withValues(alpha: 0.14),
+          color: DroidTheme.accent.withValues(alpha: 0.18),
           borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: DroidTheme.accent.withValues(alpha: 0.45)),
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
@@ -854,6 +950,7 @@ class _FeaturedApp {
   final IconData icon;
   final Color color;
   final bool optional;
+  final List<String> iconNames;
 
   const _FeaturedApp(
     this.packageName,
@@ -862,5 +959,78 @@ class _FeaturedApp {
     this.icon,
     this.color, {
     this.optional = false,
+    this.iconNames = const [],
   });
+}
+
+/// Real icon for a Linux package (installed .desktop icon or Papirus), cached per package.
+/// Shows [fallback] while loading and when no icon exists.
+class _LinuxAppIcon extends StatefulWidget {
+  final String package;
+  final List<String> iconNames;
+  final Widget fallback;
+  final double size;
+
+  const _LinuxAppIcon({
+    required this.package,
+    required this.iconNames,
+    required this.fallback,
+    this.size = 46,
+  });
+
+  static final Map<String, Future<Map<String, dynamic>?>> _cache = {};
+
+  @override
+  State<_LinuxAppIcon> createState() => _LinuxAppIconState();
+}
+
+class _LinuxAppIconState extends State<_LinuxAppIcon> {
+  late Future<Map<String, dynamic>?> _icon;
+
+  @override
+  void initState() {
+    super.initState();
+    _icon = _load();
+  }
+
+  @override
+  void didUpdateWidget(covariant _LinuxAppIcon oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.package != widget.package) _icon = _load();
+  }
+
+  Future<Map<String, dynamic>?> _load() => _LinuxAppIcon._cache.putIfAbsent(
+        widget.package,
+        () => DroidDeskPlatform.getLinuxAppIcon(
+          widget.package,
+          iconNames: widget.iconNames,
+        ).catchError((_) => null),
+      );
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<Map<String, dynamic>?>(
+      future: _icon,
+      builder: (context, snapshot) {
+        final icon = snapshot.data;
+        final bytes = icon?['bytes'];
+        if (bytes is! Uint8List) return widget.fallback;
+        final image = icon!['format'] == 'svg'
+            ? SvgPicture.memory(
+                bytes,
+                width: widget.size,
+                height: widget.size,
+                placeholderBuilder: (_) => widget.fallback,
+              )
+            : Image.memory(
+                bytes,
+                width: widget.size,
+                height: widget.size,
+                filterQuality: FilterQuality.medium,
+                errorBuilder: (_, _, _) => widget.fallback,
+              );
+        return SizedBox(width: widget.size, height: widget.size, child: image);
+      },
+    );
+  }
 }
