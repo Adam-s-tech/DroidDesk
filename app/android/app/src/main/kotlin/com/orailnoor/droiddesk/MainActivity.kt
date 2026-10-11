@@ -16,6 +16,7 @@ import com.orailnoor.droiddesk.runtime.LinuxRuntime
 import com.orailnoor.droiddesk.runtime.ChrootRuntime
 import com.orailnoor.droiddesk.runtime.RootShell
 import com.orailnoor.droiddesk.runtime.AndroidAppBridge
+import com.orailnoor.droiddesk.runtime.AppUpdater
 import com.orailnoor.droiddesk.runtime.DesktopIntegration
 import com.orailnoor.droiddesk.view.AndroidSurfaceViewFactory
 import com.orailnoor.droiddesk.x11.X11ServerService
@@ -592,6 +593,54 @@ class MainActivity : FlutterActivity() {
                         }
                         else -> result.success(false)
                     }
+                }
+
+                // ── In-app updates ──
+                "getAppVersion" -> result.success(AppUpdater.currentVersion(this))
+                "canInstallUpdates" -> result.success(AppUpdater.canInstall(this))
+                "openInstallPermission" -> {
+                    runCatching { AppUpdater.openInstallPermissionSettings(this) }
+                    result.success(true)
+                }
+                "cancelUpdateDownload" -> {
+                    AppUpdater.cancel()
+                    result.success(true)
+                }
+                "cleanupUpdates" -> {
+                    thread(name = "update-cleanup") { runCatching { AppUpdater.cleanup(this) } }
+                    result.success(true)
+                }
+                "downloadUpdate" -> {
+                    val url = call.argument<String>("url").orEmpty()
+                    val size = (call.argument<Number>("size") ?: 0).toLong()
+                    val tag = call.argument<String>("tag") ?: "latest"
+                    installThread("update-download") {
+                        val messenger = flutterEngine.dartExecutor.binaryMessenger
+                        val outcome: Map<String, Any?> = try {
+                            val apk = AppUpdater.download(this, url, size, tag) { done, total ->
+                                runOnUiThread {
+                                    MethodChannel(messenger, CHANNEL).invokeMethod(
+                                        "onUpdateProgress",
+                                        mapOf("downloaded" to done, "total" to total),
+                                    )
+                                }
+                            }
+                            mapOf("ok" to true, "path" to apk.absolutePath)
+                        } catch (error: AppUpdater.UpdateException) {
+                            mapOf("ok" to false, "code" to error.code, "message" to error.message)
+                        } catch (error: Throwable) {
+                            Log.e(TAG, "Update download failed", error)
+                            mapOf("ok" to false, "code" to "unknown", "message" to error.message)
+                        }
+                        runOnUiThread { result.success(outcome) }
+                    }
+                }
+                "installUpdate" -> {
+                    val path = call.argument<String>("path").orEmpty()
+                    val ok = runCatching { AppUpdater.install(this, java.io.File(path)) }
+                        .onFailure { Log.e(TAG, "Could not open the installer", it) }
+                        .isSuccess
+                    result.success(ok)
                 }
 
                 "getAndroidApps" -> result.success(AndroidAppBridge.listApps(this))

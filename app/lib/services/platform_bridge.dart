@@ -16,6 +16,7 @@ class DroidDeskPlatform {
   static Function(double progress, String status)? onPackageOperationProgress;
   static Function(String text)? onPackageOperationLog;
   static Function(String text)? onTerminalOutput;
+  static Function(int downloaded, int total)? onUpdateProgress;
 
   static Future<void> updateStatusBarTheme(bool isLightMode) async {
     try {
@@ -70,8 +71,59 @@ class DroidDeskPlatform {
           final args = call.arguments as Map;
           onPackageOperationLog?.call(args['text'] as String);
           break;
+        case 'onUpdateProgress':
+          final args = call.arguments as Map;
+          onUpdateProgress?.call(
+            (args['downloaded'] as num).toInt(),
+            (args['total'] as num).toInt(),
+          );
+          break;
       }
     });
+  }
+
+  // ── In-app updates ──
+
+  /// Installed app version: `{versionName, versionCode}`.
+  static Future<Map<String, dynamic>> getAppVersion() async {
+    final result = await _channel.invokeMethod<Map<dynamic, dynamic>>('getAppVersion');
+    return result == null ? {} : Map<String, dynamic>.from(result);
+  }
+
+  /// Whether Android allows this app to install packages ("Install unknown apps").
+  static Future<bool> canInstallUpdates() async {
+    return await _channel.invokeMethod<bool>('canInstallUpdates') ?? false;
+  }
+
+  /// Opens the "Install unknown apps" settings page for DroidDesk.
+  static Future<void> openInstallPermission() async {
+    await _channel.invokeMethod('openInstallPermission');
+  }
+
+  /// Downloads and verifies a release APK. Returns `{ok, path}` or `{ok: false, code, message}`.
+  static Future<Map<String, dynamic>> downloadUpdate({
+    required String url,
+    required int size,
+    required String tag,
+  }) async {
+    final result = await _channel.invokeMethod<Map<dynamic, dynamic>>(
+      'downloadUpdate',
+      {'url': url, 'size': size, 'tag': tag},
+    );
+    return result == null ? {'ok': false, 'code': 'unknown'} : Map<String, dynamic>.from(result);
+  }
+
+  static Future<void> cancelUpdateDownload() async {
+    await _channel.invokeMethod('cancelUpdateDownload');
+  }
+
+  static Future<void> cleanupUpdates() async {
+    await _channel.invokeMethod('cleanupUpdates');
+  }
+
+  /// Opens Android's package installer for a downloaded update.
+  static Future<bool> installUpdate(String path) async {
+    return await _channel.invokeMethod<bool>('installUpdate', {'path': path}) ?? false;
   }
 
   // ── Runtime Status ──
