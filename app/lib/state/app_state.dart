@@ -98,6 +98,8 @@ class AppState extends ChangeNotifier {
   AppLifecycleListener? _lifecycleListener;
 
   Future<void> initialize() async {
+    DroidDeskPlatform.onPackageOperationProgress = _onPackageProgress;
+    DroidDeskPlatform.onPackageOperationLog = _onPackageLog;
     _lifecycleListener ??= AppLifecycleListener(onResume: refreshStatus);    await _loadThemeMode();
 
     // Set up progress callbacks
@@ -450,6 +452,130 @@ class AppState extends ChangeNotifier {
     }
   }
 
+  // ── Package operations ──
+  //
+  // Installs and removals from the App Store live here rather than in the screen, so they keep
+  // running (and stay visible on Home) when the user navigates away.
+
+  String? _activePackage;
+  String _activePackageName = '';
+  List<String> _activePackageIconNames = const [];
+  bool _packageRemoving = false;
+  bool _packageCancelling = false;
+  double _packageProgress = 0;
+  String _packageStatus = '';
+  String _packageLog = '';
+  PackageOperationResult? _lastPackageResult;
+  int _packageResultId = 0;
+
+  String? get activePackage => _activePackage;
+  String get activePackageName => _activePackageName;
+  List<String> get activePackageIconNames => _activePackageIconNames;
+  bool get packageRemoving => _packageRemoving;
+  bool get packageCancelling => _packageCancelling;
+  double get packageProgress => _packageProgress;
+  String get packageStatus => _packageStatus;
+  String get packageLog => _packageLog;
+
+  /// Result of the most recent finished operation; [packageResultId] changes with each one.
+  PackageOperationResult? get lastPackageResult => _lastPackageResult;
+  int get packageResultId => _packageResultId;
+
+  void _onPackageProgress(double progress, String status) {
+    if (_activePackage == null) return;
+    _packageProgress = progress.clamp(0.0, 1.0);
+    _packageStatus = status;
+    notifyListeners();
+  }
+
+  void _onPackageLog(String text) {
+    if (_activePackage == null) return;
+    _packageLog += text;
+    if (_packageLog.length > 12000) {
+      _packageLog = _packageLog.substring(_packageLog.length - 12000);
+    }
+    notifyListeners();
+  }
+
+  void _startPackageOperation(
+    String package,
+    String displayName,
+    List<String> iconNames, {
+    required bool removing,
+  }) {
+    _activePackage = package;
+    _activePackageName = displayName;
+    _activePackageIconNames = iconNames;
+    _packageRemoving = removing;
+    _packageCancelling = false;
+    _packageProgress = 0;
+    _packageStatus = removing ? 'Preparing removal...' : 'Preparing $displayName...';
+    _packageLog = '';
+    notifyListeners();
+  }
+
+  void _finishPackageOperation(bool ok) {
+    final result = PackageOperationResult(
+      package: _activePackage ?? '',
+      displayName: _activePackageName,
+      iconNames: _activePackageIconNames,
+      removed: _packageRemoving,
+      cancelled: _packageCancelling,
+      ok: ok,
+    );
+    _activePackage = null;
+    _packageCancelling = false;
+    _lastPackageResult = result;
+    _packageResultId++;
+    notifyListeners();
+  }
+
+  /// Installs a native package; returns false if another operation is running or it failed.
+  Future<bool> installPackage(
+    String package, {
+    String? displayName,
+    List<String> iconNames = const [],
+  }) async {
+    if (_activePackage != null) return false;
+    _startPackageOperation(package, displayName ?? package, iconNames, removing: false);
+    var ok = false;
+    try {
+      ok = await DroidDeskPlatform.installNativePackage(package);
+    } catch (_) {}
+    _finishPackageOperation(ok);
+    return ok;
+  }
+
+  Future<bool> removePackage(
+    String package, {
+    String? displayName,
+    List<String> iconNames = const [],
+  }) async {
+    if (_activePackage != null) return false;
+    _startPackageOperation(package, displayName ?? package, iconNames, removing: true);
+    var ok = false;
+    try {
+      ok = await DroidDeskPlatform.removeNativePackage(package);
+    } catch (_) {}
+    _finishPackageOperation(ok);
+    return ok;
+  }
+
+  Future<void> cancelPackageOperation() async {
+    if (_activePackage == null || _packageCancelling || _packageRemoving) return;
+    _packageCancelling = true;
+    _packageStatus = 'Cancelling installation...';
+    notifyListeners();
+    await DroidDeskPlatform.cancelNativePackageOperation();
+  }
+
+  /// Hides the "finished" card on Home.
+  void dismissPackageResult() {
+    if (_lastPackageResult == null) return;
+    _lastPackageResult = null;
+    notifyListeners();
+  }
+
   // ── Session Control ──
 
   Future<void> startLinux({
@@ -541,4 +667,29 @@ class AppState extends ChangeNotifier {
     _errorMessage = null;
     notifyListeners();
   }
+}
+
+/// Outcome of a finished App Store install or removal.
+class PackageOperationResult {
+  final String package;
+  final String displayName;
+  final List<String> iconNames;
+  final bool removed;
+  final bool cancelled;
+  final bool ok;
+
+  const PackageOperationResult({
+    required this.package,
+    required this.displayName,
+    required this.iconNames,
+    required this.removed,
+    required this.cancelled,
+    required this.ok,
+  });
+
+  String get message => cancelled
+      ? '$displayName installation cancelled'
+      : removed
+          ? (ok ? '$displayName removed' : 'Could not remove $displayName')
+          : (ok ? '$displayName installed' : '$displayName installation failed');
 }

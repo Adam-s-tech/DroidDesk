@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:droiddesk/theme/droid_theme.dart';
+import 'package:droiddesk/widgets/package_operation_card.dart';
 import 'package:droiddesk/state/app_state.dart';
 import 'package:droiddesk/services/platform_bridge.dart';
 import 'package:droiddesk/screens/setup/de_install_screen.dart';
@@ -121,6 +122,20 @@ class HomeScreen extends StatelessWidget {
                       .animate()
                       .fadeIn(duration: 500.ms)
                       .slideY(begin: 0.05, duration: 500.ms),
+                ),
+              ),
+
+              // ── Running / finished App Store install, pinned ──
+              SliverToBoxAdapter(
+                child: PackageOperationCard(
+                  showResult: true,
+                  margin: const EdgeInsets.fromLTRB(24, 14, 24, 0),
+                  onTap: () {
+                    context.read<AppState>().dismissPackageResult();
+                    Navigator.of(context).push(
+                      MaterialPageRoute(builder: (_) => const AppCatalogScreen()),
+                    );
+                  },
                 ),
               ),
 

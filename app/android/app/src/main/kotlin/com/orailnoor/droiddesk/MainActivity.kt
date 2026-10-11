@@ -121,19 +121,33 @@ class MainActivity : FlutterActivity() {
     }
 
     @Suppress("DEPRECATION")
+    /**
+     * Undo the desktop's immersive mode while keeping the app edge-to-edge: Flutter draws behind
+     * the transparent bars and pads with SafeArea. Fitting system windows here would leave the
+     * bare (black) window showing through the status bar.
+     */
     private fun restoreSystemBars() {
         window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_FULLSCREEN)
+        window.statusBarColor = android.graphics.Color.TRANSPARENT
+        window.navigationBarColor = android.graphics.Color.TRANSPARENT
         window.decorView.systemUiVisibility =
-            android.view.View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+            android.view.View.SYSTEM_UI_FLAG_LAYOUT_STABLE or
+                android.view.View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or
+                android.view.View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            window.setDecorFitsSystemWindows(true)
+            window.setDecorFitsSystemWindows(false)
             window.insetsController?.show(
                 android.view.WindowInsets.Type.statusBars() or
                     android.view.WindowInsets.Type.navigationBars()
             )
         }
+        // Resetting the flags above clears the icon colour; re-apply the app theme's choice.
+        lightSystemBars?.let(::updateStatusBarIcons)
     }
+
+    /** Last status-bar icon mode requested by Flutter; null until the theme reports it. */
+    private var lightSystemBars: Boolean? = null
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
@@ -820,10 +834,13 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun updateStatusBarIcons(isLightMode: Boolean) {
+        lightSystemBars = isLightMode
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            val lightBars = android.view.WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS or
+                android.view.WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS
             window.insetsController?.setSystemBarsAppearance(
-                if (isLightMode) android.view.WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS else 0,
-                android.view.WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS
+                if (isLightMode) lightBars else 0,
+                lightBars,
             )
         } else {
             @Suppress("DEPRECATION")

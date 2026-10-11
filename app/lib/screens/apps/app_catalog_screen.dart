@@ -1,12 +1,12 @@
 import 'dart:async';
-import 'dart:typed_data';
 
 import 'package:droiddesk/services/platform_bridge.dart';
 import 'package:droiddesk/state/app_state.dart';
 import 'package:droiddesk/theme/droid_theme.dart';
 import 'package:droiddesk/widgets/droid_ui.dart';
+import 'package:droiddesk/widgets/linux_app_icon.dart';
+import 'package:droiddesk/widgets/package_operation_card.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_svg/flutter_svg.dart';
 import 'package:provider/provider.dart';
 
 class AppCatalogScreen extends StatefulWidget {
@@ -99,12 +99,7 @@ class _AppCatalogScreenState extends State<AppCatalogScreen> {
   List<_PackageItem> _installedPackages = const [];
   bool _searching = true;
   bool _loadingInstalled = true;
-  String? _activePackage;
-  double _operationProgress = 0;
-  String _operationStatus = '';
-  String _operationLog = '';
-  bool _cancelRequested = false;
-  bool _cancelling = false;
+  int _seenPackageResultId = -1;
 
   Set<String> get _installedNames =>
       _installedPackages.map((package) => package.name).toSet();
@@ -112,8 +107,6 @@ class _AppCatalogScreenState extends State<AppCatalogScreen> {
   @override
   void initState() {
     super.initState();
-    DroidDeskPlatform.onPackageOperationProgress = _onProgress;
-    DroidDeskPlatform.onPackageOperationLog = _onLog;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       context.read<AppState>().refreshOptionalApps();
       _loadInstalled();
@@ -123,32 +116,10 @@ class _AppCatalogScreenState extends State<AppCatalogScreen> {
 
   @override
   void dispose() {
-    if (_activePackage != null) {
-      unawaited(DroidDeskPlatform.cancelNativePackageOperation());
-    }
+    // Installs keep running in AppState after leaving; progress stays pinned on Home.
     _searchDebounce?.cancel();
     _searchController.dispose();
-    DroidDeskPlatform.onPackageOperationProgress = null;
-    DroidDeskPlatform.onPackageOperationLog = null;
     super.dispose();
-  }
-
-  void _onProgress(double progress, String status) {
-    if (!mounted) return;
-    setState(() {
-      _operationProgress = progress.clamp(0, 1);
-      _operationStatus = status;
-    });
-  }
-
-  void _onLog(String text) {
-    if (!mounted) return;
-    setState(() {
-      _operationLog += text;
-      if (_operationLog.length > 12000) {
-        _operationLog = _operationLog.substring(_operationLog.length - 12000);
-      }
-    });
   }
 
   Future<void> _loadInstalled() async {
@@ -187,50 +158,42 @@ class _AppCatalogScreenState extends State<AppCatalogScreen> {
     }
   }
 
+  _FeaturedApp? _featuredFor(String packageName) {
+    for (final app in _featured) {
+      if (app.packageName == packageName) return app;
+    }
+    return null;
+  }
+
   Future<void> _install(String packageName) async {
-    if (_activePackage != null) return;
-    setState(() {
-      _activePackage = packageName;
-      _operationProgress = 0;
-      _operationStatus = 'Preparing $packageName...';
-      _operationLog = '';
-      _cancelRequested = false;
-      _cancelling = false;
-    });
-    final ok = await DroidDeskPlatform.installNativePackage(packageName);
+    final featured = _featuredFor(packageName);
+    final ok = await context.read<AppState>().installPackage(
+      packageName,
+      displayName: featured?.name ?? _PackageItem(name: packageName).displayName,
+      iconNames: featured?.iconNames ?? const [],
+    );
     await _loadInstalled();
     if (!mounted) return;
-    final cancelled = _cancelRequested;
-    setState(() {
-      _activePackage = null;
-      _cancelling = false;
-    });
+    _showResultSnack(ok);
+  }
+
+  /// Shows the outcome of the operation that just finished in AppState (once).
+  void _showResultSnack(bool ok) {
+    final state = context.read<AppState>();
+    final result = state.lastPackageResult;
+    if (result == null || state.packageResultId == _seenPackageResultId) return;
+    _seenPackageResultId = state.packageResultId;
+    state.dismissPackageResult();
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(
-          cancelled
-              ? '$packageName installation cancelled'
-              : ok
-              ? '$packageName installed'
-              : '$packageName installation failed',
-        ),
-        backgroundColor: cancelled
+        content: Text(result.message),
+        backgroundColor: result.cancelled
             ? DroidTheme.surfaceLight
-            : ok
+            : result.ok
             ? DroidTheme.success
             : DroidTheme.error,
       ),
     );
-  }
-
-  Future<void> _cancelOperation() async {
-    if (_activePackage == null || _cancelling) return;
-    setState(() {
-      _cancelRequested = true;
-      _cancelling = true;
-      _operationStatus = 'Cancelling installation...';
-    });
-    await DroidDeskPlatform.cancelNativePackageOperation();
   }
 
   Future<void> _remove(_PackageItem package) async {
@@ -251,25 +214,14 @@ class _AppCatalogScreenState extends State<AppCatalogScreen> {
         ],
       ),
     );
-    if (confirmed != true || _activePackage != null) return;
-    setState(() {
-      _activePackage = package.name;
-      _operationProgress = 0;
-      _operationStatus = 'Preparing removal...';
-      _operationLog = '';
-      _cancelRequested = false;
-      _cancelling = false;
-    });
-    final ok = await DroidDeskPlatform.removeNativePackage(package.name);
+    if (!mounted || confirmed != true) return;
+    final ok = await context.read<AppState>().removePackage(
+      package.name,
+      displayName: package.displayName,
+    );
     await _loadInstalled();
     if (!mounted) return;
-    setState(() => _activePackage = null);
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(ok ? '${package.displayName} removed' : 'Removal failed'),
-        backgroundColor: ok ? DroidTheme.success : DroidTheme.error,
-      ),
-    );
+    _showResultSnack(ok);
   }
 
   void _selectTab(int index) {
@@ -321,12 +273,9 @@ class _AppCatalogScreenState extends State<AppCatalogScreen> {
           ),
         ),
       ),
-      bottomNavigationBar: AnimatedSize(
-        duration: const Duration(milliseconds: 220),
-        curve: Curves.easeOutCubic,
-        child: _activePackage == null
-            ? const SizedBox(width: double.infinity)
-            : _operationPanel(),
+      bottomNavigationBar: const SafeArea(
+        top: false,
+        child: PackageOperationCard(margin: EdgeInsets.fromLTRB(14, 0, 14, 12)),
       ),
     );
   }
@@ -415,7 +364,7 @@ class _AppCatalogScreenState extends State<AppCatalogScreen> {
           const SizedBox(height: 14),
           Row(
             children: [
-              _LinuxAppIcon(
+              LinuxAppIcon(
                 package: app.packageName,
                 iconNames: app.iconNames,
                 fallback: _appTile(app.icon, app.color, size: 60),
@@ -561,7 +510,7 @@ class _AppCatalogScreenState extends State<AppCatalogScreen> {
       padding: const EdgeInsets.fromLTRB(14, 12, 12, 12),
       child: Row(
         children: [
-          _LinuxAppIcon(
+          LinuxAppIcon(
             package: package.name,
             iconNames: featured?.iconNames ?? const [],
             fallback: _appTile(
@@ -612,12 +561,14 @@ class _AppCatalogScreenState extends State<AppCatalogScreen> {
   }) {
     final installed =
         package.installed || _installedNames.contains(package.name);
-    final busy = _activePackage != null;
-    final active = _activePackage == package.name;
+    final appState = context.watch<AppState>();
+    final busy = appState.activePackage != null;
+    final active = appState.activePackage == package.name;
 
     if (active) {
-      final value = _operationProgress > 0 ? _operationProgress : null;
-      final percent = '${(_operationProgress * 100).round()}%';
+      final progress = appState.packageProgress;
+      final value = progress > 0 ? progress : null;
+      final percent = '${(progress * 100).round()}%';
       if (prominent) {
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -625,7 +576,7 @@ class _AppCatalogScreenState extends State<AppCatalogScreen> {
             Row(
               children: [
                 Text(
-                  _cancelling ? 'Cancelling…' : 'Installing…',
+                  appState.packageCancelling ? 'Cancelling…' : 'Installing…',
                   style: DroidTheme.bodySm.copyWith(fontWeight: FontWeight.w600),
                 ),
                 const Spacer(),
@@ -791,98 +742,6 @@ class _AppCatalogScreenState extends State<AppCatalogScreen> {
     );
   }
 
-  /// Floating progress card shown while a package is being installed or removed.
-  Widget _operationPanel() {
-    final clean = _operationLog.replaceAll(
-      RegExp(r'\x1B\[[0-?]*[ -/]*[@-~]'),
-      '',
-    );
-    final tail = clean
-        .split('\n')
-        .where((line) => line.trim().isNotEmpty)
-        .toList()
-        .reversed
-        .take(2)
-        .toList()
-        .reversed
-        .join('\n');
-    return SafeArea(
-      top: false,
-      child: Container(
-        margin: const EdgeInsets.fromLTRB(14, 0, 14, 12),
-        padding: const EdgeInsets.fromLTRB(16, 14, 10, 14),
-        decoration: BoxDecoration(
-          color: DroidTheme.surfaceLight,
-          borderRadius: BorderRadius.circular(DroidTheme.radiusLg),
-          border: Border.all(color: DroidTheme.surfaceBorder),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.18),
-              blurRadius: 18,
-              offset: const Offset(0, 6),
-            ),
-          ],
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        _operationStatus,
-                        style: DroidTheme.headingSm.copyWith(fontSize: 15),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        _operationProgress > 0
-                            ? '${(_operationProgress * 100).round()}% complete'
-                            : 'Starting…',
-                        style: DroidTheme.bodySm,
-                      ),
-                    ],
-                  ),
-                ),
-                TextButton(
-                  onPressed: _cancelling ? null : _cancelOperation,
-                  style: TextButton.styleFrom(foregroundColor: DroidTheme.error),
-                  child: Text(_cancelling ? 'Cancelling…' : 'Cancel'),
-                ),
-              ],
-            ),
-            const SizedBox(height: 10),
-            Padding(
-              padding: const EdgeInsets.only(right: 6),
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(4),
-                child: LinearProgressIndicator(
-                  minHeight: 6,
-                  backgroundColor: DroidTheme.surfaceBorder,
-                  value: _operationProgress > 0 ? _operationProgress : null,
-                ),
-              ),
-            ),
-            if (tail.isNotEmpty) ...[
-              const SizedBox(height: 10),
-              Text(
-                tail,
-                style: DroidTheme.monoSm,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-              ),
-            ],
-          ],
-        ),
-      ),
-    );
-  }
-
   IconData _categoryIcon(String section, bool gui) {
     final value = section.toLowerCase();
     if (value.contains('internet')) return Icons.public_rounded;
@@ -961,76 +820,4 @@ class _FeaturedApp {
     this.optional = false,
     this.iconNames = const [],
   });
-}
-
-/// Real icon for a Linux package (installed .desktop icon or Papirus), cached per package.
-/// Shows [fallback] while loading and when no icon exists.
-class _LinuxAppIcon extends StatefulWidget {
-  final String package;
-  final List<String> iconNames;
-  final Widget fallback;
-  final double size;
-
-  const _LinuxAppIcon({
-    required this.package,
-    required this.iconNames,
-    required this.fallback,
-    this.size = 46,
-  });
-
-  static final Map<String, Future<Map<String, dynamic>?>> _cache = {};
-
-  @override
-  State<_LinuxAppIcon> createState() => _LinuxAppIconState();
-}
-
-class _LinuxAppIconState extends State<_LinuxAppIcon> {
-  late Future<Map<String, dynamic>?> _icon;
-
-  @override
-  void initState() {
-    super.initState();
-    _icon = _load();
-  }
-
-  @override
-  void didUpdateWidget(covariant _LinuxAppIcon oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.package != widget.package) _icon = _load();
-  }
-
-  Future<Map<String, dynamic>?> _load() => _LinuxAppIcon._cache.putIfAbsent(
-        widget.package,
-        () => DroidDeskPlatform.getLinuxAppIcon(
-          widget.package,
-          iconNames: widget.iconNames,
-        ).catchError((_) => null),
-      );
-
-  @override
-  Widget build(BuildContext context) {
-    return FutureBuilder<Map<String, dynamic>?>(
-      future: _icon,
-      builder: (context, snapshot) {
-        final icon = snapshot.data;
-        final bytes = icon?['bytes'];
-        if (bytes is! Uint8List) return widget.fallback;
-        final image = icon!['format'] == 'svg'
-            ? SvgPicture.memory(
-                bytes,
-                width: widget.size,
-                height: widget.size,
-                placeholderBuilder: (_) => widget.fallback,
-              )
-            : Image.memory(
-                bytes,
-                width: widget.size,
-                height: widget.size,
-                filterQuality: FilterQuality.medium,
-                errorBuilder: (_, _, _) => widget.fallback,
-              );
-        return SizedBox(width: widget.size, height: widget.size, child: image);
-      },
-    );
-  }
 }
