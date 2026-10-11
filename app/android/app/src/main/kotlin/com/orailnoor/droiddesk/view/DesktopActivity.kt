@@ -23,7 +23,6 @@ import android.util.Log
 import android.widget.Toast
 import android.widget.Button
 import android.widget.ImageView
-import android.widget.ProgressBar
 import android.widget.TextView
 import android.view.Gravity
 import android.content.Intent
@@ -59,6 +58,7 @@ class DesktopActivity : Activity() {
     private var controlOverlay: LinearLayout? = null
     private var collapsedControl: Button? = null
     private var extraKeysBar: ExtraKeysBar? = null
+    private var logoAnimator: FloatingLogoAnimator? = null
     private var surfaceCallback: SurfaceHolder.Callback? = null
     private var intentListenerThread: Thread? = null
     private var loadingOverlay: FrameLayout? = null
@@ -178,6 +178,7 @@ class DesktopActivity : Activity() {
             visibility = View.VISIBLE
             bringToFront()
         }
+        logoAnimator?.start()
         estimatedLoadingSeconds = 30
         loadingStartedAt = android.os.SystemClock.elapsedRealtime()
         loadingMessageHandler.postDelayed(loadingMessageTicker, 5_000)
@@ -605,6 +606,7 @@ class DesktopActivity : Activity() {
                 ImageView(this).apply {
                     setImageBitmap(BitmapFactory.decodeStream(stream))
                     scaleType = ImageView.ScaleType.FIT_CENTER
+                    logoAnimator = FloatingLogoAnimator(this).also { it.start() }
                     content.addView(
                         this,
                         LinearLayout.LayoutParams((112 * density).toInt(), (112 * density).toInt()).apply {
@@ -621,18 +623,16 @@ class DesktopActivity : Activity() {
             setTextColor(if (light) Color.rgb(28, 28, 30) else Color.WHITE)
             gravity = Gravity.CENTER
         })
-        content.addView(ProgressBar(this).apply {
-            isIndeterminate = true
-            indeterminateTintList = ColorStateList.valueOf(
-                if (light) Color.rgb(10, 132, 255) else Color.WHITE,
-            )
-            contentDescription = "Loading Linux desktop"
-        }, LinearLayout.LayoutParams(
-            (42 * density).toInt(),
-            (42 * density).toInt(),
+        content.addView(LoadingSpinnerView(
+            this,
+            arcColor = Color.rgb(10, 132, 255),
+            trackColor = if (light) Color.argb(40, 10, 132, 255) else Color.argb(50, 255, 255, 255),
+        ), LinearLayout.LayoutParams(
+            (44 * density).toInt(),
+            (44 * density).toInt(),
         ).apply {
             gravity = Gravity.CENTER_HORIZONTAL
-            topMargin = (20 * density).toInt()
+            topMargin = (22 * density).toInt()
         })
         loadingStatus = TextView(this).apply {
             text = loadingMessages.first()
@@ -696,6 +696,7 @@ class DesktopActivity : Activity() {
                 ?.setDuration(350)
                 ?.withEndAction {
                     loadingOverlay?.visibility = View.GONE
+                    logoAnimator?.stop()
                     collapsedControl?.visibility = View.VISIBLE
                     collapsedControl?.bringToFront()
                     lorieView?.requestFocus()
