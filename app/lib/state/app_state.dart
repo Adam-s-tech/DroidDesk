@@ -561,6 +561,24 @@ class AppState extends ChangeNotifier {
     return ok;
   }
 
+  /// Package id used for the "update everything" operation.
+  static const updatesOperation = '__updates__';
+
+  bool get isUpdatingAll => _activePackage == updatesOperation;
+
+  /// Upgrades all non-core packages through the same progress UI as installs.
+  Future<bool> updateAllPackages() async {
+    if (_activePackage != null) return false;
+    _startPackageOperation(updatesOperation, 'packages', const [], removing: false);
+    _packageStatus = 'Checking for updates...';
+    var ok = false;
+    try {
+      ok = await DroidDeskPlatform.upgradeAllPackages();
+    } catch (_) {}
+    _finishPackageOperation(ok);
+    return ok;
+  }
+
   Future<void> cancelPackageOperation() async {
     if (_activePackage == null || _packageCancelling || _packageRemoving) return;
     _packageCancelling = true;
@@ -687,7 +705,15 @@ class PackageOperationResult {
     required this.ok,
   });
 
-  String get message => cancelled
+  bool get isUpdateAll => package == AppState.updatesOperation;
+
+  String get message => isUpdateAll
+      ? (cancelled
+          ? 'Update cancelled'
+          : ok
+              ? 'Packages updated'
+              : 'Some updates failed')
+      : cancelled
       ? '$displayName installation cancelled'
       : removed
           ? (ok ? '$displayName removed' : 'Could not remove $displayName')

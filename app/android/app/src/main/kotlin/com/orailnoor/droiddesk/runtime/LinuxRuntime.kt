@@ -1617,6 +1617,112 @@ class LinuxRuntime(private val context: Context) {
         return removed && !output.startsWith("Error:")
     }
 
+    /**
+     * Installed packages with a newer version available. Core packages DroidDesk depends on
+     * (see [isProtectedPackage]) are left out: upgrading them can break the relocated runtime.
+     */
+    fun getUpgradablePackages(refresh: Boolean): List<Map<String, Any>> {
+        if (!isBootstrapped()) return emptyList()
+        if (refresh) {
+            runQuickCommand("timeout --signal=TERM --kill-after=5s 120s apt-get update >/dev/null 2>&1; true")
+        }
+        val installed = installedPackageRecords().associateBy { it["name"] as String }
+        // Lines look like: name/stable 1.2-1 aarch64 [upgradable from: 1.1-1]
+        return runQuickCommand("apt list --upgradable 2>/dev/null").lineSequence().mapNotNull { line ->
+            if (!line.contains("[upgradable from:")) return@mapNotNull null
+            val name = line.substringBefore('/').trim()
+            if (!isSafePackageName(name) || isProtectedPackage(name)) return@mapNotNull null
+            val newVersion = line.substringAfter('/').split(' ').getOrNull(1).orEmpty()
+            val current = line.substringAfter("upgradable from: ").substringBefore(']').trim()
+            val record = installed[name]
+            val description = record?.get("description") as? String ?: ""
+            mapOf(
+                "name" to name,
+                "version" to newVersion,
+                "currentVersion" to current,
+                "description" to description,
+                "section" to (record?.get("section") ?: categoryForPackage(name, description)),
+                "installed" to true,
+                "gui" to providesDesktopEntry(name),
+            )
+        }.distinctBy { it["name"] }.toList()
+    }
+
+    /** Upgrades every package from [getUpgradablePackages]; core packages are never touched. */
+    fun upgradeAllPackages(onProgress: (Double, String) -> Unit): Boolean {
+        onProgress(0.06, "Repairing interrupted package operations...")
+        installPackageGroup("dpkg --configure -a")
+        if (packageOperationCancelled) return cancelled(onProgress)
+        onProgress(0.14, "Checking for updates...")
+        val packages = getUpgradablePackages(refresh = true).map { it["name"] as String }
+        if (packageOperationCancelled) return cancelled(onProgress)
+        if (packages.isEmpty()) {
+            onProgress(1.0, "Everything is up to date")
+            return true
+        }
+        onProgress(0.3, "Updating ${packages.size} package${if (packages.size == 1) "" else "s"}...")
+        val output = executeCommand(
+            "DEBIAN_FRONTEND=noninteractive apt-get " +
+                "-o Dpkg::Options::=--force-confdef " +
+                "-o Dpkg::Options::=--force-confold " +
+                "install --only-upgrade -y ${packages.joinToString(" ")}",
+        )
+        if (packageOperationCancelled) return cancelled(onProgress)
+        onProgress(0.88, "Finishing up...")
+        patchShebangs(force = true)
+        executeCommand("timeout --signal=TERM --kill-after=5s 90s dpkg --configure -a")
+        refreshDesktopMenus()
+        val remaining = getUpgradablePackages(refresh = false).size
+        val ok = !output.startsWith("Error:") && remaining < packages.size
+        onProgress(
+            if (ok) 1.0 else -1.0,
+            if (!ok) "Update failed" else if (remaining == 0) "All packages updated" else "$remaining package(s) could not be updated",
+        )
+        return ok
+    }
+
+    private fun cancelled(onProgress: (Double, String) -> Unit): Boolean {
+        onProgress(-1.0, "Update cancelled")
+        return false
+    }
+
+    /** Disk usage of the Linux runtime and the device, in bytes. */
+    fun getStorageInfo(): Map<String, Any> {
+        val stat = android.os.StatFs(baseDir.absolutePath)
+        val info = mutableMapOf<String, Any>(
+            "deviceFree" to stat.availableBytes,
+            "deviceTotal" to stat.totalBytes,
+            "available" to isBootstrapped(),
+        )
+        if (!isBootstrapped()) return info
+        // Separate du runs: one du call counts each inode once, so a nested path listed after
+        // its parent would report 0.
+        val output = runQuickCommand(
+            "cd '${baseDir.absolutePath}' && for d in usr home usr/var/cache/apt usr/var/lib/apt/lists; " +
+                "do du -sk \"\$d\" 2>/dev/null; done; true",
+        )
+        val sizes = output.lineSequence().mapNotNull { line ->
+            val parts = line.trim().split(Regex("\\s+"), limit = 2)
+            val kb = parts.getOrNull(0)?.toLongOrNull() ?: return@mapNotNull null
+            parts.getOrNull(1)?.let { it to kb * 1024 }
+        }.toMap()
+        val cache = (sizes["usr/var/cache/apt"] ?: 0L) + (sizes["usr/var/lib/apt/lists"] ?: 0L)
+        info["system"] = ((sizes["usr"] ?: 0L) - cache).coerceAtLeast(0L)
+        info["home"] = sizes["home"] ?: 0L
+        info["cache"] = cache
+        info["packages"] = installedPackageRecords().size
+        return info
+    }
+
+    /** Deletes downloaded package files (apt-get clean). Returns bytes freed, or -1 on failure. */
+    fun cleanPackageCache(): Long {
+        val before = (getStorageInfo()["cache"] as? Long) ?: 0L
+        val output = executeCommand("apt-get clean")
+        if (output.startsWith("Error:")) return -1L
+        val after = (getStorageInfo()["cache"] as? Long) ?: 0L
+        return (before - after).coerceAtLeast(0L)
+    }
+
     private fun installedPackageRecords(): List<Map<String, Any>> {
         val statusFile = File(prefixDir, "var/lib/dpkg/status")
         if (!statusFile.isFile) return emptyList()

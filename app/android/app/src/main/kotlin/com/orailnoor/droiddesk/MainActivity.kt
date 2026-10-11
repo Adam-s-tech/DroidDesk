@@ -508,6 +508,34 @@ class MainActivity : FlutterActivity() {
                     runPackageOperation(flutterEngine, result, packageName, remove = false)
                 }
 
+                "getUpgradablePackages" -> {
+                    val refresh = call.argument<Boolean>("refresh") ?: false
+                    thread(name = "upgradable-packages") {
+                        val packages = runCatching { linuxRuntime.getUpgradablePackages(refresh) }
+                            .getOrDefault(emptyList())
+                        runOnUiThread { result.success(packages) }
+                    }
+                }
+
+                "upgradeAllPackages" -> runPackageOperation(
+                    flutterEngine, result, "updates", remove = false,
+                ) { progress -> linuxRuntime.upgradeAllPackages(progress) }
+
+                "getStorageInfo" -> {
+                    thread(name = "storage-info") {
+                        val info = runCatching { linuxRuntime.getStorageInfo() }
+                            .getOrDefault(emptyMap())
+                        runOnUiThread { result.success(info) }
+                    }
+                }
+
+                "cleanPackageCache" -> {
+                    thread(name = "clean-package-cache") {
+                        val freed = runCatching { linuxRuntime.cleanPackageCache() }.getOrDefault(-1L)
+                        runOnUiThread { result.success(freed) }
+                    }
+                }
+
                 "removeNativePackage" -> {
                     val packageName = call.argument<String>("package") ?: ""
                     runPackageOperation(flutterEngine, result, packageName, remove = true)
@@ -902,6 +930,7 @@ class MainActivity : FlutterActivity() {
         result: MethodChannel.Result,
         packageName: String,
         remove: Boolean,
+        operation: ((progress: (Double, String) -> Unit) -> Boolean)? = null,
     ) {
         if (!packageOperationRunning.compareAndSet(false, true)) {
             MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL).invokeMethod(
@@ -934,7 +963,9 @@ class MainActivity : FlutterActivity() {
             }
             try {
                 startForegroundService()
-                val ok = if (remove) {
+                val ok = if (operation != null) {
+                    operation(progress)
+                } else if (remove) {
                     linuxRuntime.removeStorePackage(packageName, progress)
                 } else {
                     linuxRuntime.installStorePackage(packageName, progress)

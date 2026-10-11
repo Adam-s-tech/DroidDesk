@@ -259,6 +259,8 @@ class DroidSegmentedTabs extends StatelessWidget {
                         child: Row(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
+                            // Four or more segments: labels only, icons would not fit.
+                            if (labels.length < 4) ...[
                             Icon(
                               icons[i],
                               size: 17,
@@ -267,6 +269,7 @@ class DroidSegmentedTabs extends StatelessWidget {
                                   : DroidTheme.textMuted,
                             ),
                             const SizedBox(width: 6),
+                            ],
                             Text(
                               labels[i],
                               style: DroidTheme.bodySm.copyWith(

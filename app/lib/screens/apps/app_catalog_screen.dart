@@ -100,6 +100,10 @@ class _AppCatalogScreenState extends State<AppCatalogScreen> {
   bool _searching = true;
   bool _loadingInstalled = true;
   int _seenPackageResultId = -1;
+  List<_PackageItem> _updates = const [];
+  bool _loadingUpdates = false;
+  bool _checkingUpdates = false;
+  bool _updatesChecked = false;
 
   Set<String> get _installedNames =>
       _installedPackages.map((package) => package.name).toSet();
@@ -226,7 +230,48 @@ class _AppCatalogScreenState extends State<AppCatalogScreen> {
 
   void _selectTab(int index) {
     setState(() => _tab = index);
-    if (index == 2) _loadInstalled();
+    if (index == 2 && !_updatesChecked) _loadUpdates();
+    if (index == 3) _loadInstalled();
+  }
+
+  /// Shows the cached update list immediately, then refreshes package lists in the background.
+  Future<void> _loadUpdates() async {
+    _updatesChecked = true;
+    setState(() => _loadingUpdates = _updates.isEmpty);
+    try {
+      final cached = await DroidDeskPlatform.getUpgradablePackages();
+      if (mounted) {
+        setState(() {
+          _updates = cached.map(_PackageItem.fromMap).toList();
+          _loadingUpdates = false;
+          _checkingUpdates = true;
+        });
+      }
+      final fresh = await DroidDeskPlatform.getUpgradablePackages(refresh: true);
+      if (mounted) setState(() => _updates = fresh.map(_PackageItem.fromMap).toList());
+    } catch (_) {
+    } finally {
+      if (mounted) {
+        setState(() {
+          _loadingUpdates = false;
+          _checkingUpdates = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _updateAll() async {
+    final ok = await context.read<AppState>().updateAllPackages();
+    if (!mounted) return;
+    _showResultSnack(ok);
+    _updatesChecked = false;
+    await _loadUpdates();
+  }
+
+  Future<void> _updateOne(_PackageItem package) async {
+    await _install(package.name);
+    if (!mounted) return;
+    setState(() => _updates = _updates.where((p) => p.name != package.name).toList());
   }
 
   @override
@@ -246,10 +291,11 @@ class _AppCatalogScreenState extends State<AppCatalogScreen> {
               Padding(
                 padding: const EdgeInsets.fromLTRB(20, 20, 20, 8),
                 child: DroidSegmentedTabs(
-                  labels: const ['Featured', 'Browse', 'Installed'],
+                  labels: const ['Featured', 'Browse', 'Updates', 'Installed'],
                   icons: const [
                     Icons.auto_awesome_rounded,
                     Icons.search_rounded,
+                    Icons.system_update_alt_rounded,
                     Icons.check_circle_outline_rounded,
                   ],
                   selected: _tab,
@@ -264,6 +310,7 @@ class _AppCatalogScreenState extends State<AppCatalogScreen> {
                     child: switch (_tab) {
                       0 => _featuredView(),
                       1 => _browseView(),
+                      2 => _updatesView(),
                       _ => _installedView(),
                     },
                   ),
@@ -435,6 +482,161 @@ class _AppCatalogScreenState extends State<AppCatalogScreen> {
                 ),
         ),
       ],
+    );
+  }
+
+  Widget _updatesView() {
+    final appState = context.watch<AppState>();
+    final busy = appState.activePackage != null;
+    if (_loadingUpdates) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    return RefreshIndicator(
+      onRefresh: () async {
+        _updatesChecked = false;
+        await _loadUpdates();
+      },
+      child: ListView(
+        padding: const EdgeInsets.fromLTRB(20, 12, 20, 28),
+        children: [
+          DroidGroupCard(
+            child: Padding(
+              padding: const EdgeInsets.all(18),
+              child: Row(
+                children: [
+                  Container(
+                    width: 46,
+                    height: 46,
+                    decoration: BoxDecoration(
+                      color: (_updates.isEmpty ? DroidTheme.accent : DroidTheme.primary)
+                          .withValues(alpha: 0.15),
+                      borderRadius: BorderRadius.circular(13),
+                    ),
+                    child: Icon(
+                      _updates.isEmpty
+                          ? Icons.verified_rounded
+                          : Icons.system_update_alt_rounded,
+                      color: _updates.isEmpty ? DroidTheme.accent : DroidTheme.primary,
+                    ),
+                  ),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          _updates.isEmpty
+                              ? 'Up to date'
+                              : '${_updates.length} update${_updates.length == 1 ? '' : 's'}',
+                          style: DroidTheme.headingSm,
+                        ),
+                        const SizedBox(height: 2),
+                        Row(
+                          children: [
+                            if (_checkingUpdates) ...[
+                              const SizedBox(
+                                width: 11,
+                                height: 11,
+                                child: CircularProgressIndicator(strokeWidth: 1.6),
+                              ),
+                              const SizedBox(width: 6),
+                            ],
+                            Expanded(
+                              child: Text(
+                                _checkingUpdates
+                                    ? 'Checking for updates…'
+                                    : 'Ready to install',
+                                style: DroidTheme.bodySm,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                  if (_updates.isNotEmpty) ...[
+                    const SizedBox(width: 10),
+                    _capsule(
+                      label: 'Update all',
+                      compact: true,
+                      color: DroidTheme.primary,
+                      filled: true,
+                      onTap: busy ? null : _updateAll,
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+          if (_updates.isNotEmpty) ...[
+            const SizedBox(height: 26),
+            const DroidSectionLabel('Available updates'),
+            const SizedBox(height: 10),
+            DroidGroupCard(
+              child: Column(
+                children: [
+                  for (var i = 0; i < _updates.length; i++) ...[
+                    if (i > 0) const DroidInsetDivider(indent: 76),
+                    _updateRow(_updates[i], busy: busy, active: appState.activePackage == _updates[i].name),
+                  ],
+                ],
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _updateRow(_PackageItem package, {required bool busy, required bool active}) {
+    final featured = _featuredFor(package.name);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(14, 12, 12, 12),
+      child: Row(
+        children: [
+          LinuxAppIcon(
+            package: package.name,
+            iconNames: featured?.iconNames ?? const [],
+            fallback: _appTile(
+              featured?.icon ?? _categoryIcon(package.section, package.gui),
+              featured?.color ?? _categoryColor(package.section),
+            ),
+          ),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  featured?.name ?? package.displayName,
+                  style: DroidTheme.headingSm.copyWith(fontSize: 15),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  package.currentVersion.isEmpty
+                      ? package.version
+                      : '${package.currentVersion}  →  ${package.version}',
+                  style: DroidTheme.monoSm,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 10),
+          active
+              ? _actionButton(package)
+              : _capsule(
+                  label: 'Update',
+                  color: DroidTheme.primary,
+                  onTap: busy ? null : () => _updateOne(package),
+                ),
+        ],
+      ),
     );
   }
 
@@ -712,6 +914,7 @@ class _AppCatalogScreenState extends State<AppCatalogScreen> {
     required Color color,
     required VoidCallback? onTap,
     bool filled = false,
+    bool compact = false,
   }) {
     final enabled = onTap != null;
     return Material(
@@ -724,7 +927,7 @@ class _AppCatalogScreenState extends State<AppCatalogScreen> {
         onTap: onTap,
         child: Container(
           constraints: const BoxConstraints(minWidth: 74),
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 7),
+          padding: EdgeInsets.symmetric(horizontal: compact ? 12 : 16, vertical: 7),
           alignment: Alignment.center,
           child: Text(
             label.toUpperCase(),
@@ -767,6 +970,7 @@ class _PackageItem {
   final String name;
   final String description;
   final String version;
+  final String currentVersion;
   final String section;
   final bool installed;
   final bool gui;
@@ -776,6 +980,7 @@ class _PackageItem {
     required this.name,
     this.description = '',
     this.version = '',
+    this.currentVersion = '',
     this.section = 'System',
     this.installed = false,
     this.gui = false,
@@ -786,6 +991,7 @@ class _PackageItem {
     name: map['name']?.toString() ?? '',
     description: map['description']?.toString() ?? '',
     version: map['version']?.toString() ?? '',
+    currentVersion: map['currentVersion']?.toString() ?? '',
     section: map['section']?.toString() ?? 'System',
     installed: map['installed'] == true,
     gui: map['gui'] == true,

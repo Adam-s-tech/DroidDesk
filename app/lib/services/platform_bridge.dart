@@ -177,6 +177,32 @@ class DroidDeskPlatform {
         false;
   }
 
+  /// Installed packages with newer versions; [refresh] runs `apt-get update` first (slow).
+  static Future<List<Map<String, dynamic>>> getUpgradablePackages({bool refresh = false}) async {
+    final result = await _channel.invokeMethod<List<dynamic>>(
+      'getUpgradablePackages',
+      {'refresh': refresh},
+    );
+    return (result ?? const [])
+        .map((item) => Map<String, dynamic>.from(item as Map))
+        .toList();
+  }
+
+  static Future<bool> upgradeAllPackages() async {
+    return await _channel.invokeMethod<bool>('upgradeAllPackages') ?? false;
+  }
+
+  /// Linux and device disk usage in bytes: system, home, cache, deviceFree, deviceTotal.
+  static Future<Map<String, dynamic>> getStorageInfo() async {
+    final result = await _channel.invokeMethod<Map<dynamic, dynamic>>('getStorageInfo');
+    return result == null ? {} : Map<String, dynamic>.from(result);
+  }
+
+  /// Deletes downloaded package files; returns bytes freed or -1 on failure.
+  static Future<int> cleanPackageCache() async {
+    return await _channel.invokeMethod<int>('cleanPackageCache') ?? -1;
+  }
+
   static Future<bool> removeNativePackage(String packageName) async {
     return await _channel.invokeMethod<bool>('removeNativePackage', {
           'package': packageName,

@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:droiddesk/theme/droid_theme.dart';
 import 'package:droiddesk/widgets/package_operation_card.dart';
+import 'package:droiddesk/screens/storage_screen.dart';
 import 'package:droiddesk/state/app_state.dart';
 import 'package:droiddesk/services/platform_bridge.dart';
 import 'package:droiddesk/screens/setup/de_install_screen.dart';
@@ -598,6 +599,18 @@ class HomeScreen extends StatelessWidget {
                       final batteryUnrestricted = snapshot.data?[1] == false;
                       return _SettingsGroup(
                         children: [
+                          _SettingsRow(
+                            icon: Icons.pie_chart_rounded,
+                            color: const Color(0xFFBF5AF2),
+                            title: 'Storage',
+                            subtitle: 'Space used by Linux and clean-up',
+                            onTap: () {
+                              Navigator.pop(sheetContext);
+                              Navigator.of(pageContext).push(
+                                MaterialPageRoute(builder: (_) => const StorageScreen()),
+                              );
+                            },
+                          ),
                           if (batteryUnrestricted)
                             const _SettingsRow(
                               icon: Icons.battery_charging_full_rounded,

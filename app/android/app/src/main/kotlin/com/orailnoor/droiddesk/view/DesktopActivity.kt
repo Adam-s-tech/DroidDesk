@@ -308,7 +308,7 @@ class DesktopActivity : Activity() {
 
     private fun attachDesktopInput() {
         if (inputController == null) {
-            inputController = X11InputController(lorieView!!, onThreeFingerTap = ::showKeyboard)
+            inputController = X11InputController(lorieView!!, onThreeFingerTap = ::toggleKeyboard)
         }
         addDesktopControls()
         lorieView?.requestFocus()
@@ -512,6 +512,22 @@ class DesktopActivity : Activity() {
         view.y = view.y.coerceIn(0f, maxY)
     }
 
+    /** Three-finger tap: open the keyboard, or close it when it is already showing. */
+    private fun toggleKeyboard() {
+        val imeVisible = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            window.decorView.rootWindowInsets?.isVisible(WindowInsets.Type.ime()) == true
+        } else {
+            extraKeysBar?.visibility == View.VISIBLE
+        }
+        if (imeVisible) hideKeyboard() else showKeyboard()
+    }
+
+    private fun hideKeyboard() {
+        val view = lorieView ?: return
+        val inputMethod = getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager
+        inputMethod.hideSoftInputFromWindow(view.windowToken, 0)
+    }
+
     private fun showKeyboard() {
         val view = lorieView ?: return
         val inputMethod = getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager
@@ -563,8 +579,22 @@ class DesktopActivity : Activity() {
         }, "LinuxDesktopReady").start()
     }
 
+    /** Follows the theme picked in the app (Flutter stores it as flutter.theme_mode). */
+    private fun isLightTheme(): Boolean {
+        val mode = getSharedPreferences("FlutterSharedPreferences", MODE_PRIVATE)
+            .getString("flutter.theme_mode", "dark")
+        return when (mode) {
+            "light" -> true
+            "system" -> (resources.configuration.uiMode and
+                android.content.res.Configuration.UI_MODE_NIGHT_MASK) !=
+                android.content.res.Configuration.UI_MODE_NIGHT_YES
+            else -> false
+        }
+    }
+
     private fun showLoadingOverlay() {
         val density = resources.displayMetrics.density
+        val light = isLightTheme()
         val content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
@@ -588,12 +618,14 @@ class DesktopActivity : Activity() {
         content.addView(TextView(this).apply {
             text = "DroidDesk"
             textSize = 28f
-            setTextColor(Color.WHITE)
+            setTextColor(if (light) Color.rgb(28, 28, 30) else Color.WHITE)
             gravity = Gravity.CENTER
         })
         content.addView(ProgressBar(this).apply {
             isIndeterminate = true
-            indeterminateTintList = ColorStateList.valueOf(Color.WHITE)
+            indeterminateTintList = ColorStateList.valueOf(
+                if (light) Color.rgb(10, 132, 255) else Color.WHITE,
+            )
             contentDescription = "Loading Linux desktop"
         }, LinearLayout.LayoutParams(
             (42 * density).toInt(),
@@ -605,7 +637,7 @@ class DesktopActivity : Activity() {
         loadingStatus = TextView(this).apply {
             text = loadingMessages.first()
             textSize = 14f
-            setTextColor(Color.rgb(190, 198, 215))
+            setTextColor(if (light) Color.rgb(58, 58, 60) else Color.rgb(190, 198, 215))
             gravity = Gravity.CENTER
         }.also { status ->
             content.addView(status, LinearLayout.LayoutParams(
@@ -616,7 +648,7 @@ class DesktopActivity : Activity() {
         loadingEstimate = TextView(this).apply {
             text = "About $estimatedLoadingSeconds seconds remaining"
             textSize = 12f
-            setTextColor(Color.rgb(130, 143, 164))
+            setTextColor(if (light) Color.rgb(110, 110, 115) else Color.rgb(130, 143, 164))
             gravity = Gravity.CENTER
             contentDescription = text
         }.also { estimate ->
@@ -629,7 +661,11 @@ class DesktopActivity : Activity() {
         loadingOverlay = FrameLayout(this).apply {
             background = GradientDrawable(
                 GradientDrawable.Orientation.TOP_BOTTOM,
-                intArrayOf(Color.rgb(12, 18, 32), Color.rgb(4, 7, 14)),
+                if (light) {
+                    intArrayOf(Color.rgb(242, 242, 247), Color.rgb(237, 237, 242))
+                } else {
+                    intArrayOf(Color.rgb(12, 18, 32), Color.rgb(4, 7, 14))
+                },
             )
             addView(content, FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.WRAP_CONTENT,

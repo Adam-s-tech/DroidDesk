@@ -68,7 +68,17 @@ class _PackageOperationCardState extends State<PackageOperationCard> {
     );
   }
 
-  Widget _icon(String package, List<String> iconNames) => LinuxAppIcon(
+  Widget _icon(String package, List<String> iconNames) => package == AppState.updatesOperation
+      ? Container(
+          width: 42,
+          height: 42,
+          decoration: BoxDecoration(
+            color: DroidTheme.primary.withValues(alpha: 0.14),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: const Icon(Icons.system_update_alt_rounded, color: DroidTheme.primary, size: 21),
+        )
+      : LinuxAppIcon(
         package: package,
         iconNames: iconNames,
         size: 42,
@@ -127,7 +137,9 @@ class _PackageOperationCardState extends State<PackageOperationCard> {
         ? 'Cancelling'
         : state.packageRemoving
             ? 'Removing'
-            : 'Installing';
+            : state.isUpdatingAll
+                ? 'Updating'
+                : 'Installing';
     final log = state.packageLog
         .replaceAll(RegExp(r'\x1B\[[0-?]*[ -/]*[@-~]'), '')
         .split('\n')
@@ -275,7 +287,7 @@ class _PackageOperationCardState extends State<PackageOperationCard> {
                   ),
                   const SizedBox(height: 2),
                   Text(
-                    success && !result.removed
+                    !result.isUpdateAll && success && !result.removed
                         ? 'Find it in the desktop app menu'
                         : 'Open the App Store for details',
                     style: DroidTheme.bodySm,
