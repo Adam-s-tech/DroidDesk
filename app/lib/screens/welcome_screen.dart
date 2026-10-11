@@ -80,17 +80,17 @@ class WelcomeScreen extends StatelessWidget {
                   style: DroidTheme.bodyLg,
                 ).animate().fadeIn(delay: 180.ms, duration: 450.ms),
                 const SizedBox(height: 28),
-                const _Feature(
+                _Feature(
                   icon: Icons.lock_outline_rounded,
                   text: 'Private and local',
                 ),
                 const SizedBox(height: 14),
-                const _Feature(
+                _Feature(
                   icon: Icons.bolt_rounded,
                   text: 'Optimized for your GPU',
                 ),
                 const SizedBox(height: 14),
-                const _Feature(
+                _Feature(
                   icon: Icons.desktop_mac_outlined,
                   text: 'Desktop Environment, ready to work',
                 ),
@@ -143,10 +143,10 @@ class _Feature extends StatelessWidget {
           width: 34,
           height: 34,
           decoration: BoxDecoration(
-            color: DroidTheme.surfaceLight,
+            color: DroidTheme.primary.withValues(alpha: 0.12),
             shape: BoxShape.circle,
           ),
-          child: Icon(icon, size: 17, color: DroidTheme.primaryLight),
+          child: Icon(icon, size: 17, color: DroidTheme.primary),
         ),
         const SizedBox(width: 13),
         Text(

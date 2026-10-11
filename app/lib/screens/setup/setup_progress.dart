@@ -358,15 +358,16 @@ class _SetupProgressScreenState extends State<SetupProgressScreen> {
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
         color: const Color(0xFF080D18),
-        border: Border.all(color: DroidTheme.surfaceBorder),
+        border: Border.all(color: const Color(0xFF2C2C2E)),
         borderRadius: BorderRadius.circular(12),
       ),
       child: SingleChildScrollView(
         reverse: true,
         child: Text(
           cleanLog,
+          // The log panel stays dark in both themes, so its text is always light.
           style: DroidTheme.monoSm.copyWith(
-            color: DroidTheme.textSecondary,
+            color: const Color(0xFFE5E5EA),
             height: 1.35,
           ),
         ),

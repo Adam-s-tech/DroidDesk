@@ -57,7 +57,7 @@ class _StorageScreenState extends State<StorageScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const DroidPageHeader(
+              DroidPageHeader(
                 title: 'Storage',
                 subtitle: 'Space used by Linux on this phone',
               ),
@@ -120,7 +120,7 @@ class _StorageScreenState extends State<StorageScreen> {
           ),
         ),
         const SizedBox(height: 26),
-        const DroidSectionLabel('Clean up'),
+        DroidSectionLabel('Clean up'),
         const SizedBox(height: 10),
         DroidGroupCard(
           child: Padding(

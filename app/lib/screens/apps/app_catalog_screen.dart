@@ -284,7 +284,7 @@ class _AppCatalogScreenState extends State<AppCatalogScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const DroidPageHeader(
+              DroidPageHeader(
                 title: 'Linux App Store',
                 subtitle: 'Apps and tools for your desktop',
               ),
@@ -320,7 +320,7 @@ class _AppCatalogScreenState extends State<AppCatalogScreen> {
           ),
         ),
       ),
-      bottomNavigationBar: const SafeArea(
+      bottomNavigationBar: SafeArea(
         top: false,
         child: PackageOperationCard(margin: EdgeInsets.fromLTRB(14, 0, 14, 12)),
       ),
@@ -361,13 +361,13 @@ class _AppCatalogScreenState extends State<AppCatalogScreen> {
       children: [
         _heroCard(hero, itemFor(hero), installerFor(hero)),
         const SizedBox(height: 26),
-        const DroidSectionLabel('Popular apps'),
+        DroidSectionLabel('Popular apps'),
         const SizedBox(height: 10),
         DroidGroupCard(
           child: Column(
             children: [
               for (var i = 0; i < rest.length; i++) ...[
-                if (i > 0) const DroidInsetDivider(indent: 76),
+                if (i > 0) DroidInsetDivider(indent: 76),
                 _packageRow(
                   itemFor(rest[i]),
                   featured: rest[i],
@@ -456,7 +456,7 @@ class _AppCatalogScreenState extends State<AppCatalogScreen> {
           child: _searchResults.isEmpty && !_searching
               ? ListView(
                   padding: const EdgeInsets.fromLTRB(20, 8, 20, 28),
-                  children: const [
+                  children: [
                     DroidEmptyCard(
                       icon: Icons.search_off_rounded,
                       title: 'No matching packages',
@@ -472,7 +472,7 @@ class _AppCatalogScreenState extends State<AppCatalogScreen> {
                         child: Column(
                           children: [
                             for (var i = 0; i < _searchResults.length; i++) ...[
-                              if (i > 0) const DroidInsetDivider(indent: 76),
+                              if (i > 0) DroidInsetDivider(indent: 76),
                               _packageRow(_searchResults[i]),
                             ],
                           ],
@@ -572,13 +572,13 @@ class _AppCatalogScreenState extends State<AppCatalogScreen> {
           ),
           if (_updates.isNotEmpty) ...[
             const SizedBox(height: 26),
-            const DroidSectionLabel('Available updates'),
+            DroidSectionLabel('Available updates'),
             const SizedBox(height: 10),
             DroidGroupCard(
               child: Column(
                 children: [
                   for (var i = 0; i < _updates.length; i++) ...[
-                    if (i > 0) const DroidInsetDivider(indent: 76),
+                    if (i > 0) DroidInsetDivider(indent: 76),
                     _updateRow(_updates[i], busy: busy, active: appState.activePackage == _updates[i].name),
                   ],
                 ],
@@ -651,7 +651,7 @@ class _AppCatalogScreenState extends State<AppCatalogScreen> {
         children: [
           Row(
             children: [
-              const DroidSectionLabel('Installed packages'),
+              DroidSectionLabel('Installed packages'),
               const Spacer(),
               if (_installedPackages.isNotEmpty)
                 Text('${_installedPackages.length}', style: DroidTheme.bodySm),
@@ -659,7 +659,7 @@ class _AppCatalogScreenState extends State<AppCatalogScreen> {
           ),
           const SizedBox(height: 10),
           if (_installedPackages.isEmpty)
-            const DroidEmptyCard(
+            DroidEmptyCard(
               icon: Icons.inventory_2_outlined,
               title: 'Nothing installed yet',
               subtitle: 'Apps you install from Featured or Browse show up here.',
@@ -669,7 +669,7 @@ class _AppCatalogScreenState extends State<AppCatalogScreen> {
               child: Column(
                 children: [
                   for (var i = 0; i < _installedPackages.length; i++) ...[
-                    if (i > 0) const DroidInsetDivider(indent: 76),
+                    if (i > 0) DroidInsetDivider(indent: 76),
                     _packageRow(_installedPackages[i], allowRemove: true),
                   ],
                 ],

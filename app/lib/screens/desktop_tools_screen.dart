@@ -164,7 +164,7 @@ class _DesktopToolsScreenState extends State<DesktopToolsScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const DroidPageHeader(
+              DroidPageHeader(
                 title: 'Desktop Tools',
                 subtitle: 'Dock apps and desktop backups',
               ),
@@ -222,7 +222,7 @@ class _DesktopToolsScreenState extends State<DesktopToolsScreen> {
       children: [
         Row(
           children: [
-            const DroidSectionLabel('Pinned to dock'),
+            DroidSectionLabel('Pinned to dock'),
             const Spacer(),
             if (_dockBusy)
               const Padding(
@@ -238,7 +238,7 @@ class _DesktopToolsScreenState extends State<DesktopToolsScreen> {
         ),
         const SizedBox(height: 10),
         if (_dockPackages.isEmpty)
-          const DroidEmptyCard(
+          DroidEmptyCard(
             icon: Icons.push_pin_outlined,
             title: 'No apps pinned',
             subtitle: 'Add Android apps below to launch them from the Linux dock.',
@@ -269,7 +269,7 @@ class _DesktopToolsScreenState extends State<DesktopToolsScreen> {
                   key: ValueKey(package),
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    if (index > 0) const DroidInsetDivider(),
+                    if (index > 0) DroidInsetDivider(),
                     _AppRow(
                       package: package,
                       label: app?['label']?.toString() ?? package,
@@ -299,7 +299,7 @@ class _DesktopToolsScreenState extends State<DesktopToolsScreen> {
             ),
           ),
         const SizedBox(height: 28),
-        const DroidSectionLabel('Add an Android app'),
+        DroidSectionLabel('Add an Android app'),
         const SizedBox(height: 10),
         DroidSearchField(
           controller: _dockSearchController,
@@ -327,7 +327,7 @@ class _DesktopToolsScreenState extends State<DesktopToolsScreen> {
             child: Column(
               children: [
                 for (var i = 0; i < available.length; i++) ...[
-                  if (i > 0) const DroidInsetDivider(),
+                  if (i > 0) DroidInsetDivider(),
                   _AppRow(
                     package: available[i]['package'].toString(),
                     label: available[i]['label'].toString(),
@@ -405,7 +405,7 @@ class _DesktopToolsScreenState extends State<DesktopToolsScreen> {
         const SizedBox(height: 28),
         Row(
           children: [
-            const DroidSectionLabel('Snapshots'),
+            DroidSectionLabel('Snapshots'),
             const Spacer(),
             if (_snapshots.isNotEmpty)
               Text('${_snapshots.length}', style: DroidTheme.bodySm),
@@ -413,7 +413,7 @@ class _DesktopToolsScreenState extends State<DesktopToolsScreen> {
         ),
         const SizedBox(height: 10),
         if (_snapshots.isEmpty)
-          const DroidEmptyCard(
+          DroidEmptyCard(
             icon: Icons.inventory_2_outlined,
             title: 'No snapshots yet',
             subtitle: 'Create one before big changes so you can roll back.',
@@ -423,7 +423,7 @@ class _DesktopToolsScreenState extends State<DesktopToolsScreen> {
             child: Column(
               children: [
                 for (var i = 0; i < _snapshots.length; i++) ...[
-                  if (i > 0) const DroidInsetDivider(),
+                  if (i > 0) DroidInsetDivider(),
                   _snapshotRow(_snapshots[i]),
                 ],
               ],

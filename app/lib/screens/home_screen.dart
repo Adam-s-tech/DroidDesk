@@ -512,7 +512,7 @@ class HomeScreen extends StatelessWidget {
                   Text('Settings', style: DroidTheme.headingLg),
                   const SizedBox(height: 22),
 
-                  const _SettingsSectionLabel('Appearance'),
+                  _SettingsSectionLabel('Appearance'),
                   Row(
                     children: [
                       Expanded(
@@ -548,7 +548,7 @@ class HomeScreen extends StatelessWidget {
                   ),
                   const SizedBox(height: 26),
 
-                  const _SettingsSectionLabel('Desktop'),
+                  _SettingsSectionLabel('Desktop'),
                   _SettingsGroup(
                     children: [
                       _SettingsRow(
@@ -587,7 +587,7 @@ class HomeScreen extends StatelessWidget {
                   ),
                   const SizedBox(height: 26),
 
-                  const _SettingsSectionLabel('System'),
+                  _SettingsSectionLabel('System'),
                   FutureBuilder<List<bool>>(
                     future: Future.wait([
                       DroidDeskPlatform.isDefaultLauncher(),
@@ -612,7 +612,7 @@ class HomeScreen extends StatelessWidget {
                             },
                           ),
                           if (batteryUnrestricted)
-                            const _SettingsRow(
+                            _SettingsRow(
                               icon: Icons.battery_charging_full_rounded,
                               color: DroidTheme.accent,
                               title: 'Battery optimization',
