@@ -12,8 +12,9 @@ plugins {
 val releaseKeystore = Properties().apply {
     rootProject.file("key.properties").takeIf { it.isFile }?.inputStream()?.use(::load)
 }
+// Trimmed: a stray space after a hand-edited value would otherwise break the path or password.
 fun releaseSetting(property: String, env: String): String? =
-    releaseKeystore.getProperty(property) ?: System.getenv(env)
+    (releaseKeystore.getProperty(property) ?: System.getenv(env))?.trim()?.takeIf { it.isNotEmpty() }
 val releaseStoreFile = releaseSetting("storeFile", "DROIDDESK_KEYSTORE")
 
 android {
