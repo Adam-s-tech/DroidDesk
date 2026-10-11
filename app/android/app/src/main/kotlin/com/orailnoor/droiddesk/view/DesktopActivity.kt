@@ -439,26 +439,79 @@ class DesktopActivity : Activity() {
         placeholder.requestApplyInsets()
     }
 
+    /** Notch layout last pushed into the Linux session: X11 width + padding (l, t, r, b). */
+    private var appliedNotchLayout: List<Int>? = null
+
     /**
-     * Keeps the Linux desktop out of the camera notch: the X11 view is inset by the cutout's safe
-     * area plus a little breathing room, so panels and menus never sit under it. The area outside
-     * stays black, which blends with the notch. Recomputed on rotation.
+     * The desktop stays full screen (it draws under the notch); the Linux side moves out of the
+     * way instead. On the notch edge: xfwm4 margins keep windows clear, the panels shorten and
+     * anchor to the opposite corner (side notch) or the top bar drops below it (top notch).
+     * Recomputed on rotation; xfconf changes apply live.
      */
     private fun avoidDisplayCutout(insets: WindowInsets) {
-        val view = lorieView ?: return
+        if (!desktopRevealed) return
         val cutout = insets.displayCutout
-        val gap = (4 * resources.displayMetrics.density).toInt()
-        fun pad(inset: Int) = if (inset > 0) inset + gap else 0
-        val params = view.layoutParams as? FrameLayout.LayoutParams ?: return
-        val left = pad(cutout?.safeInsetLeft ?: 0)
-        val top = pad(cutout?.safeInsetTop ?: 0)
-        val right = pad(cutout?.safeInsetRight ?: 0)
-        val bottom = pad(cutout?.safeInsetBottom ?: 0)
-        if (params.leftMargin == left && params.topMargin == top &&
-            params.rightMargin == right && params.bottomMargin == bottom
-        ) return
-        params.setMargins(left, top, right, bottom)
-        view.layoutParams = params
+        val scale = X11InputController.DISPLAY_SCALE_PERCENT / 100f
+        val gap = 6
+        fun toX(px: Int?) = if ((px ?: 0) > 0) (px!! / scale).toInt() + gap else 0
+        // Window width for the new orientation (the view may not be re-laid out yet).
+        val windowWidth = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            windowManager.currentWindowMetrics.bounds.width()
+        } else {
+            android.util.DisplayMetrics().also {
+                @Suppress("DEPRECATION") windowManager.defaultDisplay.getRealMetrics(it)
+            }.widthPixels
+        }
+        val width = (windowWidth / scale).toInt()
+        if (width <= 0) return
+        val left = toX(cutout?.safeInsetLeft)
+        val top = toX(cutout?.safeInsetTop)
+        val right = toX(cutout?.safeInsetRight)
+        val bottom = toX(cutout?.safeInsetBottom)
+        val layout = listOf(width, left, top, right, bottom)
+        if (layout == appliedNotchLayout) return
+        appliedNotchLayout = layout
+
+        // Panel length is a percentage; round down so the gap is never smaller than the notch.
+        val sideLength = ((width - maxOf(left, right)) * 100 / width).coerceIn(50, 100)
+        val (dockPosition, dockLength) = when {
+            left > 0 -> "p=4;x=0;y=0" to sideLength   // bottom-right
+            right > 0 -> "p=8;x=0;y=0" to sideLength  // bottom-left
+            else -> "p=10;x=0;y=0" to 100             // bottom, full width
+        }
+        val command = buildString {
+            append("export DISPLAY=:0; ")
+            if (sessionMode == "chroot") append("export DBUS_SESSION_BUS_ADDRESS=unix:path=/tmp/dbus-session; ")
+            fun xfconf(channel: String, prop: String, type: String, value: String) =
+                append("xfconf-query -c $channel -p $prop -n -t $type -s \"$value\" >/dev/null 2>&1; ")
+            for ((name, value) in listOf("left" to left, "top" to top, "right" to right, "bottom" to bottom)) {
+                xfconf("xfwm4", "/general/margin_$name", "int", value.toString())
+            }
+            xfconf("xfce4-panel", "/panels/panel-2/length", "uint", dockLength.toString())
+            xfconf("xfce4-panel", "/panels/panel-2/position", "string", dockPosition)
+            if (top > 0) {
+                // Free position is the panel's centre: drop the bar just below the notch.
+                append("size=\$(xfconf-query -c xfce4-panel -p /panels/panel-1/size 2>/dev/null || echo 45); ")
+                xfconf("xfce4-panel", "/panels/panel-1/length", "uint", "100")
+                xfconf("xfce4-panel", "/panels/panel-1/position", "string",
+                    "p=0;x=${width / 2};y=\$(( $top + size / 2 ))")
+            } else {
+                xfconf("xfce4-panel", "/panels/panel-1/length", "uint", if (left > 0 || right > 0) sideLength.toString() else "100")
+                xfconf("xfce4-panel", "/panels/panel-1/position", "string",
+                    when {
+                        left > 0 -> "p=1;x=0;y=0"   // top-right
+                        right > 0 -> "p=11;x=0;y=0" // top-left
+                        else -> "p=9;x=0;y=0"       // top, full width
+                    })
+            }
+            append("true")
+        }
+        Thread({
+            runCatching {
+                if (sessionMode == "chroot") chrootRuntime.executeCommand(command) {}
+                else linuxRuntime.executeCommand(command)
+            }.onFailure { Log.w(TAG, "Could not apply notch padding", it) }
+        }, "NotchPadding").start()
     }
 
     @Suppress("DEPRECATION")
@@ -720,6 +773,8 @@ class DesktopActivity : Activity() {
                 ?.withEndAction {
                     loadingOverlay?.visibility = View.GONE
                     logoAnimator?.stop()
+                    appliedNotchLayout = null
+                    placeholder.requestApplyInsets()
                     collapsedControl?.visibility = View.VISIBLE
                     collapsedControl?.bringToFront()
                     lorieView?.requestFocus()
