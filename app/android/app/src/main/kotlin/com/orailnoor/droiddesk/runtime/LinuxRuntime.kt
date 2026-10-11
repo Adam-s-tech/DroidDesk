@@ -1101,9 +1101,17 @@ class LinuxRuntime(private val context: Context) {
     ): Boolean {
         if (!isDpkgPackageInstalled("mesa")) {
             onProgress?.invoke(progress, "Installing Mesa graphics runtime...")
-            if (!installPackageGroup("pkg install -y mesa")) {
+            // libc++ too: apt keeps an older installed copy, which Mesa can't load against.
+            if (!installPackageGroup("pkg install -y mesa libc++")) {
                 Log.e(TAG, "Mesa graphics runtime installation failed")
                 return false
+            }
+        }
+        if (mesaNeedsNewerLibcxx()) {
+            onProgress?.invoke(progress, "Updating the C++ runtime for graphics...")
+            Log.w(TAG, "Mesa needs a newer libc++ than installed; upgrading it")
+            if (!installPackageGroup("pkg install -y libc++") || mesaNeedsNewerLibcxx()) {
+                Log.e(TAG, "libc++ is still too old for Mesa; OpenGL will be unavailable")
             }
         }
 
@@ -1124,6 +1132,25 @@ class LinuxRuntime(private val context: Context) {
             Log.i(TAG, "Graphics mode: Mesa llvmpipe software rendering")
         }
         return true
+    }
+
+    /**
+     * Mesa from the current repo links against libc++ symbols that older installed
+     * libc++_shared.so builds don't export (seen: std::__ndk1::__hash_memory). Then
+     * libGLX_mesa fails to load and every OpenGL client gets no context at all.
+     */
+    private fun mesaNeedsNewerLibcxx(): Boolean {
+        val lib = File(prefixDir, "lib")
+        val libcxx = File(lib, "libc++_shared.so")
+        if (!libcxx.isFile) return false
+        val mesaLibs = (lib.listFiles { f -> f.name.startsWith("libgallium-") && f.name.endsWith(".so") }
+            ?.toList().orEmpty()) + listOf(File(lib, "libvulkan_freedreno.so")).filter { it.isFile }
+        if (mesaLibs.isEmpty()) return false
+        val symbol = "_ZNSt6__ndk113__hash_memoryEPKvm"
+        val quoted = mesaLibs.joinToString(" ") { "'${it.absolutePath}'" }
+        val needed = runQuickCommand("grep -lqa '$symbol' $quoted && echo yes").contains("yes")
+        if (!needed) return false
+        return !runQuickCommand("grep -qa '$symbol' '${libcxx.absolutePath}' && echo yes").contains("yes")
     }
 
     // ── Native Package Installation ──
