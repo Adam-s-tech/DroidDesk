@@ -550,6 +550,26 @@ class MainActivity : FlutterActivity() {
                 }
 
                 "getAndroidApps" -> result.success(AndroidAppBridge.listApps(this))
+                "getAppIcon" -> {
+                    val packageName = call.argument<String>("package") ?: ""
+                    thread(name = "app-icon") {
+                        val png = runCatching {
+                            val size = 96
+                            val bitmap = android.graphics.Bitmap.createBitmap(
+                                size, size, android.graphics.Bitmap.Config.ARGB_8888,
+                            )
+                            packageManager.getApplicationIcon(packageName).apply {
+                                setBounds(0, 0, size, size)
+                                draw(android.graphics.Canvas(bitmap))
+                            }
+                            java.io.ByteArrayOutputStream().use { out ->
+                                bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, out)
+                                out.toByteArray()
+                            }
+                        }.getOrNull()
+                        runOnUiThread { result.success(png) }
+                    }
+                }
                 "getDockPackages" -> result.success(AndroidAppBridge.getDockPackages(this))
                 "saveDockPackages" -> {
                     val packages = call.argument<List<String>>("packages").orEmpty()

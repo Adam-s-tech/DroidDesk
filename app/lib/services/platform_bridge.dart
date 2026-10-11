@@ -218,6 +218,11 @@ class DroidDeskPlatform {
         .toList();
   }
 
+  /// Launcher icon of an installed Android app as PNG bytes, or null if unavailable.
+  static Future<Uint8List?> getAppIcon(String packageName) async {
+    return _channel.invokeMethod<Uint8List>('getAppIcon', {'package': packageName});
+  }
+
   static Future<List<String>> getDockPackages() async {
     final result = await _channel.invokeMethod<List<dynamic>>(
       'getDockPackages',
