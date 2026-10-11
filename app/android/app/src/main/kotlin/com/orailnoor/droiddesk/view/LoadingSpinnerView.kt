@@ -44,9 +44,9 @@ class LoadingSpinnerView(
         canvas.drawOval(bounds, trackPaint)
 
         val t = (SystemClock.uptimeMillis() - startTime) / 1000f
-        // One full rotation every ~1.1 s; the arc breathes between 30° and 270° every 1.4 s.
-        val rotation = (t * 330f) % 360f
-        val phase = (t % 1.4f) / 1.4f
+        // One full rotation every ~1.8 s; the arc breathes between 30° and 270° every 2.4 s.
+        val rotation = (t * 200f) % 360f
+        val phase = (t % 2.4f) / 2.4f
         val sweep = 30f + 240f * ((1 - kotlin.math.cos(phase * 2 * PI)) / 2).toFloat()
         val start = rotation + (phase * 360f) * 0.6f
         canvas.drawArc(bounds, start, sweep, false, arcPaint)
@@ -75,7 +75,7 @@ class FloatingLogoAnimator(private val target: View) : Runnable {
     override fun run() {
         if (!running) return
         val t = (SystemClock.uptimeMillis() - startTime) / 1000.0
-        val wave = sin(t * 2 * PI / 2.4).toFloat()
+        val wave = sin(t * 2 * PI / 3.6).toFloat()
         target.translationY = -lift * (wave + 1) / 2
         val scale = 1f + 0.03f * wave
         target.scaleX = scale

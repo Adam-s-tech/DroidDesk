@@ -7,7 +7,7 @@ import java.io.File
 /** Installs DroidDesk's touch-friendly Ubuntu-inspired XFCE defaults once per home. */
 object XfceMobileProfile {
     private const val TAG = "XfceMobileProfile"
-    private const val PROFILE_MARKER = ".droiddesk-xfce-mobile-v10"
+    private const val PROFILE_MARKER = ".droiddesk-xfce-mobile-v11"
     private const val MONOSPACE_FONT = "DejaVu Sans Mono"
     private const val WALLPAPER_ASSET = "droiddesk/ubuntu-touch-wallpaper.jpg"
 
@@ -271,8 +271,8 @@ object XfceMobileProfile {
             <property name="panel-2" type="empty">
               <property name="position" type="string" value="p=10;x=0;y=0"/>
               <property name="mode" type="uint" value="0"/>
-              <property name="length" type="uint" value="1"/>
-              <property name="length-adjust" type="bool" value="true"/>
+              <property name="length" type="uint" value="100"/>
+              <property name="length-adjust" type="bool" value="false"/>
               <property name="position-locked" type="bool" value="true"/>
               <property name="autohide-behavior" type="uint" value="0"/>
               <property name="size" type="uint" value="$DOCK_SIZE_PX"/>
