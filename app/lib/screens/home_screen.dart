@@ -572,22 +572,36 @@ class HomeScreen extends StatelessWidget {
                   const SizedBox(height: 26),
 
                   const _SettingsSectionLabel('System'),
-                  FutureBuilder<bool>(
-                    future: DroidDeskPlatform.isDefaultLauncher(),
+                  FutureBuilder<List<bool>>(
+                    future: Future.wait([
+                      DroidDeskPlatform.isDefaultLauncher(),
+                      DroidDeskPlatform.isBatteryOptimized(),
+                    ]),
                     builder: (_, snapshot) {
-                      final isLauncher = snapshot.data == true;
+                      final isLauncher = snapshot.data?[0] == true;
+                      // Unknown until loaded; only show "Allowed" once Android confirms it.
+                      final batteryUnrestricted = snapshot.data?[1] == false;
                       return _SettingsGroup(
                         children: [
-                          _SettingsRow(
-                            icon: Icons.battery_charging_full_rounded,
-                            color: DroidTheme.warning,
-                            title: 'Battery optimization',
-                            subtitle: 'Keep the session alive in background',
-                            onTap: () {
-                              DroidDeskPlatform.requestBatteryOptimization();
-                              Navigator.pop(sheetContext);
-                            },
-                          ),
+                          if (batteryUnrestricted)
+                            const _SettingsRow(
+                              icon: Icons.battery_charging_full_rounded,
+                              color: DroidTheme.accent,
+                              title: 'Battery optimization',
+                              subtitle: 'Unrestricted in background',
+                              trailing: _StatusPill(label: 'Allowed'),
+                            )
+                          else
+                            _SettingsRow(
+                              icon: Icons.battery_charging_full_rounded,
+                              color: DroidTheme.warning,
+                              title: 'Battery optimization',
+                              subtitle: 'Keep the session alive in background',
+                              onTap: () {
+                                DroidDeskPlatform.requestBatteryOptimization();
+                                Navigator.pop(sheetContext);
+                              },
+                            ),
                           if (isLauncher)
                             _SettingsRow(
                               icon: Icons.home_rounded,
@@ -1030,14 +1044,14 @@ class _SettingsRow extends StatelessWidget {
   final String title;
   final String subtitle;
   final Widget? trailing;
-  final VoidCallback onTap;
+  final VoidCallback? onTap;
 
   const _SettingsRow({
     required this.icon,
     required this.color,
     required this.title,
     required this.subtitle,
-    required this.onTap,
+    this.onTap,
     this.trailing,
   });
 
@@ -1171,6 +1185,43 @@ class _ThemeOption extends StatelessWidget {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// Small rounded badge confirming a granted permission or completed step.
+class _StatusPill extends StatelessWidget {
+  final String label;
+
+  const _StatusPill({required this.label});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(8, 5, 10, 5),
+      decoration: BoxDecoration(
+        color: DroidTheme.accent.withValues(alpha: 0.14),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: DroidTheme.accent.withValues(alpha: 0.35)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(
+            Icons.check_circle_rounded,
+            size: 14,
+            color: DroidTheme.accent,
+          ),
+          const SizedBox(width: 4),
+          Text(
+            label,
+            style: DroidTheme.label.copyWith(
+              color: DroidTheme.accent,
+              letterSpacing: 0.1,
+            ),
+          ),
+        ],
       ),
     );
   }
