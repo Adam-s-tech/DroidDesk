@@ -263,14 +263,7 @@ class _SetupProgressScreenState extends State<SetupProgressScreen> {
                               borderRadius: BorderRadius.circular(14),
                             ),
                           ),
-                          child: const Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Text('Launch DroidDesk'),
-                              SizedBox(width: 8),
-                              Icon(Icons.rocket_launch_rounded, size: 20),
-                            ],
-                          ),
+                          child: const Text('Launch DroidDesk'),
                         ),
                       )
                       .animate()
