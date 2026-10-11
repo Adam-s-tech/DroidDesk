@@ -86,6 +86,14 @@ public class TouchInputHandler {
     private final DexListener mDexListener;
     private final TouchInputHandler mTouchpadHandler;
 
+    /** Static so the nested touchpad handler shares it; there is a single desktop at a time. */
+    private static Runnable mThreeFingerTapListener;
+
+    /** Replaces the three-finger middle click with [listener] (e.g. show the soft keyboard); null restores it. */
+    public static void setThreeFingerTapListener(Runnable listener) {
+        mThreeFingerTapListener = listener;
+    }
+
     /** Used to disambiguate a 2-finger gesture as a swipe or a pinch. */
     private final SwipeDetector mSwipePinchDetector;
 
@@ -676,6 +684,10 @@ public class TouchInputHandler {
          */
         @Override
         public void onTap(int pointerCount, float x, float y) {
+            if (pointerCount == 3 && mThreeFingerTapListener != null) {
+                mThreeFingerTapListener.run();
+                return;
+            }
             int button = mouseButtonFromPointerCount(pointerCount);
             if (button == InputStub.BUTTON_UNDEFINED)
                 return;

@@ -1,16 +1,20 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:droiddesk/theme/droid_theme.dart';
 import 'package:droiddesk/screens/setup/setup_progress.dart';
+import 'package:droiddesk/state/app_state.dart';
 
 class WelcomeScreen extends StatelessWidget {
   const WelcomeScreen({super.key});
 
   @override
   Widget build(BuildContext context) {
+    final state = context.watch<AppState>();
+
     return Scaffold(
       body: Container(
-        decoration: const BoxDecoration(
+        decoration: BoxDecoration(
           gradient: DroidTheme.backgroundGradient,
         ),
         child: SafeArea(
@@ -19,7 +23,22 @@ class WelcomeScreen extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Spacer(flex: 3),
+                Align(
+                  alignment: Alignment.topRight,
+                  child: IconButton(
+                    onPressed: () => state.toggleThemeMode(),
+                    tooltip: state.isDarkMode
+                        ? 'Switch to Light Theme'
+                        : 'Switch to Dark Theme',
+                    icon: Icon(
+                      state.isDarkMode
+                          ? Icons.light_mode_rounded
+                          : Icons.dark_mode_rounded,
+                      color: DroidTheme.textMuted,
+                    ),
+                  ),
+                ),
+                const Spacer(flex: 2),
                 Container(
                       width: 82,
                       height: 82,
@@ -61,17 +80,17 @@ class WelcomeScreen extends StatelessWidget {
                   style: DroidTheme.bodyLg,
                 ).animate().fadeIn(delay: 180.ms, duration: 450.ms),
                 const SizedBox(height: 28),
-                const _Feature(
+                _Feature(
                   icon: Icons.lock_outline_rounded,
                   text: 'Private and local',
                 ),
                 const SizedBox(height: 14),
-                const _Feature(
+                _Feature(
                   icon: Icons.bolt_rounded,
                   text: 'Optimized for your GPU',
                 ),
                 const SizedBox(height: 14),
-                const _Feature(
+                _Feature(
                   icon: Icons.desktop_mac_outlined,
                   text: 'Desktop Environment, ready to work',
                 ),
@@ -123,11 +142,11 @@ class _Feature extends StatelessWidget {
         Container(
           width: 34,
           height: 34,
-          decoration: const BoxDecoration(
-            color: DroidTheme.surfaceLight,
+          decoration: BoxDecoration(
+            color: DroidTheme.primary.withValues(alpha: 0.12),
             shape: BoxShape.circle,
           ),
-          child: Icon(icon, size: 17, color: DroidTheme.primaryLight),
+          child: Icon(icon, size: 17, color: DroidTheme.primary),
         ),
         const SizedBox(width: 13),
         Text(

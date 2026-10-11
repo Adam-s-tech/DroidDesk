@@ -8,18 +8,25 @@ import com.termux.x11.input.InputEventSender
 import com.termux.x11.input.TouchInputHandler
 
 /** Connects LorieView to the gesture/input implementation imported from Termux:X11. */
-class X11InputController(private val lorieView: LorieView) {
+class X11InputController(
+    private val lorieView: LorieView,
+    onThreeFingerTap: () -> Unit = {},
+) {
     private val inputHandler = TouchInputHandler(
         MainActivity.getInstance(),
         InputEventSender(lorieView),
     )
 
-    var mode: Int = TouchInputHandler.InputMode.TRACKPAD
+    /** Input mode the user picked last time; survives app restarts. */
+    private val savedModes = lorieView.context.getSharedPreferences("desktop_input", android.content.Context.MODE_PRIVATE)
+
+    var mode: Int = savedModes.getInt(KEY_MODE, TouchInputHandler.InputMode.TRACKPAD)
         private set
 
     init {
         setMode(mode)
         MainActivity.getInstance().setKeyHandler(inputHandler::sendKeyEvent)
+        TouchInputHandler.setThreeFingerTapListener { onThreeFingerTap() }
         lorieView.setCallback { width, height, transform ->
             inputHandler.handleInputTransformChanged(width, height, transform)
         }
@@ -45,6 +52,7 @@ class X11InputController(private val lorieView: LorieView) {
 
     fun dispose() {
         MainActivity.getInstance().setKeyHandler(null)
+        TouchInputHandler.setThreeFingerTapListener(null)
         lorieView.setOnTouchListener(null)
         lorieView.setOnGenericMotionListener(null)
         lorieView.setCallback(null)
@@ -52,6 +60,7 @@ class X11InputController(private val lorieView: LorieView) {
 
     private fun setMode(newMode: Int) {
         mode = newMode
+        savedModes.edit().putInt(KEY_MODE, newMode).apply()
         val prefs = MainActivity.getPrefs()
         prefs.touchMode.put(newMode.toString())
         inputHandler.reloadPreferences(prefs)
@@ -61,6 +70,7 @@ class X11InputController(private val lorieView: LorieView) {
         inputHandler.handleTouchEvent(lorieView, view, event)
 
     companion object {
+        private const val KEY_MODE = "mode"
         const val DISPLAY_SCALE_PERCENT = 150
 
         /** Must run before LorieView is measured so Xwayland starts at the scaled resolution. */

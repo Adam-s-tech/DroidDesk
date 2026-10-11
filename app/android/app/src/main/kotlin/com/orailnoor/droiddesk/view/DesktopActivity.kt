@@ -3,7 +3,11 @@ package com.orailnoor.droiddesk.view
 import android.app.Activity
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.graphics.Color
+import android.graphics.BitmapFactory
+import android.graphics.drawable.GradientDrawable
 import android.view.Window
 import android.view.WindowInsets
 import android.view.WindowInsetsController
@@ -18,14 +22,18 @@ import android.widget.LinearLayout
 import android.util.Log
 import android.widget.Toast
 import android.widget.Button
+import android.widget.ImageView
+import android.widget.TextView
 import android.view.Gravity
-import android.view.KeyEvent
-import android.os.SystemClock
+import android.content.Intent
 import android.content.res.ColorStateList
+import com.orailnoor.droiddesk.service.DroidDeskService
 import com.termux.x11.MainActivity as TermuxMainActivity
 import com.termux.x11.LorieView
 import com.orailnoor.droiddesk.runtime.LinuxRuntime
 import com.orailnoor.droiddesk.runtime.ChrootRuntime
+import com.orailnoor.droiddesk.runtime.ClipboardSync
+import com.orailnoor.droiddesk.runtime.XfceMobileProfile
 import com.orailnoor.droiddesk.x11.X11ServiceClient
 import com.orailnoor.droiddesk.x11.X11InputController
 import com.orailnoor.droiddesk.runtime.AndroidAppSync
@@ -42,26 +50,84 @@ class DesktopActivity : Activity() {
     private var desktopEnv = "xfce4"
     private lateinit var linuxRuntime: LinuxRuntime
     private lateinit var chrootRuntime: ChrootRuntime
+    private var clipboardSync: ClipboardSync? = null
     private lateinit var placeholder: FrameLayout
     private var x11ServiceClient: X11ServiceClient? = null
     private var inputController: X11InputController? = null
     private var inputModeButton: Button? = null
     private var controlOverlay: LinearLayout? = null
     private var collapsedControl: Button? = null
+    private var extraKeysBar: ExtraKeysBar? = null
+    private var logoAnimator: FloatingLogoAnimator? = null
     private var surfaceCallback: SurfaceHolder.Callback? = null
     private var intentListenerThread: Thread? = null
+    private var loadingOverlay: FrameLayout? = null
+    private var loadingStatus: TextView? = null
+    private var loadingEstimate: TextView? = null
+    private var desktopRevealed = false
+    private val loadingMessageHandler = Handler(Looper.getMainLooper())
+    private var loadingMessageIndex = 0
+    private var loadingStartedAt = 0L
+    private var estimatedLoadingSeconds = 30
+    private val loadingMessages = listOf(
+        "Waking up your portable Linux workspace",
+        "Connecting Android to your Linux desktop",
+        "Starting the desktop engine and services",
+        "Loading your apps, icons, and shortcuts",
+        "Polishing your panels, wallpaper, and workspace",
+        "Almost ready for your next big idea",
+    )
+    private val loadingMessageTicker = object : Runnable {
+        override fun run() {
+            val status = loadingStatus ?: return
+            val ticker = this
+            status.animate().alpha(0f).setDuration(180).withEndAction {
+                loadingMessageIndex = (loadingMessageIndex + 1) % loadingMessages.size
+                status.text = loadingMessages[loadingMessageIndex]
+                status.animate().alpha(1f).setDuration(260).withEndAction {
+                    if (!desktopRevealed) {
+                        loadingMessageHandler.postDelayed(ticker, 5_000)
+                    }
+                }.start()
+            }.start()
+        }
+    }
+    private val loadingEstimateTicker = object : Runnable {
+        override fun run() {
+            val estimate = loadingEstimate ?: return
+            val elapsedSeconds = ((android.os.SystemClock.elapsedRealtime() - loadingStartedAt) / 1_000).toInt()
+            val remaining = (estimatedLoadingSeconds - elapsedSeconds).coerceAtLeast(0)
+            estimate.text = if (remaining > 0) {
+                "About $remaining seconds remaining"
+            } else {
+                "Finishing up…"
+            }
+            estimate.contentDescription = estimate.text
+            if (!desktopRevealed) loadingMessageHandler.postDelayed(this, 1_000)
+        }
+    }
 
     companion object {
         private const val TAG = "DesktopActivity"
+        private var current: java.lang.ref.WeakReference<DesktopActivity>? = null
+
+        fun isOpen(): Boolean = current?.get()?.isFinishing == false
+
+        /** Closes the desktop screen, e.g. when the session is stopped from the notification. */
+        fun finishIfOpen() {
+            current?.get()?.let { activity -> activity.runOnUiThread { activity.finish() } }
+        }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        current = java.lang.ref.WeakReference(this)
         linuxRuntime = LinuxRuntime(this)
         chrootRuntime = ChrootRuntime(this)
         shouldStartSession = intent.getBooleanExtra("startSession", false)
         sessionMode = intent.getStringExtra("mode") ?: if (chrootRuntime.hasRoot()) "chroot" else "termux"
         desktopEnv = intent.getStringExtra("de") ?: "xfce4"
+        estimatedLoadingSeconds = if (shouldStartSession) 30 else 10
 
         requestWindowFeature(Window.FEATURE_NO_TITLE)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
@@ -69,6 +135,7 @@ class DesktopActivity : Activity() {
         placeholder = FrameLayout(this)
         placeholder.setBackgroundColor(Color.BLACK)
         setContentView(placeholder)
+        showLoadingOverlay()
         // Some Android/LineageOS builds throw from PhoneWindow.getInsetsController
         // until a decor view has been created by setContentView().
         enableImmersiveMode()
@@ -79,6 +146,7 @@ class DesktopActivity : Activity() {
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
         if (hasFocus) enableImmersiveMode()
+        if (hasFocus) startClipboardSync() else clipboardSync?.stop()
         if (hasFocus && !isSetupDone) {
             isSetupDone = true
             Log.i(TAG, "Window focused — setting up LorieView")
@@ -89,6 +157,52 @@ class DesktopActivity : Activity() {
     override fun onResume() {
         super.onResume()
         enableImmersiveMode()
+        restartSessionIfStopped()
+    }
+
+    private fun isSessionRunning(): Boolean =
+        if (sessionMode == "chroot") chrootRuntime.isRunning() else linuxRuntime.isRunning()
+
+    /**
+     * The session can be stopped while this screen stays in the back stack (notification Stop,
+     * in-app Stop). Coming back to it would only show the bare X server, so start Linux again.
+     */
+    private fun restartSessionIfStopped() {
+        if (!desktopRevealed || isSessionRunning()) return
+        Log.i(TAG, "Desktop session is no longer running; starting it again")
+        desktopRevealed = false
+        controlOverlay?.visibility = View.INVISIBLE
+        collapsedControl?.visibility = View.INVISIBLE
+        loadingOverlay?.apply {
+            alpha = 1f
+            visibility = View.VISIBLE
+            bringToFront()
+        }
+        logoAnimator?.start()
+        estimatedLoadingSeconds = 30
+        loadingStartedAt = android.os.SystemClock.elapsedRealtime()
+        loadingMessageHandler.postDelayed(loadingMessageTicker, 5_000)
+        loadingMessageHandler.postDelayed(loadingEstimateTicker, 1_000)
+        // Stop also ended the keep-alive service.
+        startForegroundService(Intent(this, DroidDeskService::class.java))
+        shouldStartSession = true
+        startDesktopSessionIfRequested()
+    }
+
+    private fun startClipboardSync() {
+        if (clipboardSync == null) {
+            clipboardSync = if (sessionMode == "chroot") {
+                ClipboardSync(this, chrootRuntime::readLinuxClipboard, chrootRuntime::writeLinuxClipboard)
+            } else {
+                ClipboardSync(this, linuxRuntime::readLinuxClipboard, linuxRuntime::writeLinuxClipboard)
+            }
+        }
+        clipboardSync?.start()
+    }
+
+    override fun onPause() {
+        clipboardSync?.stop()
+        super.onPause()
     }
 
     @Suppress("DEPRECATION")
@@ -141,6 +255,7 @@ class DesktopActivity : Activity() {
         // attaching it here, otherwise Android throws "child already has a parent".
         (lorieView!!.parent as? ViewGroup)?.removeView(lorieView)
         placeholder.addView(lorieView, params)
+        loadingOverlay?.bringToFront()
         Log.i(TAG, "LorieView added to placeholder")
 
         // Start X server only after the Surface is actually created/changed.
@@ -194,11 +309,15 @@ class DesktopActivity : Activity() {
 
     private fun attachDesktopInput() {
         if (inputController == null) {
-            inputController = X11InputController(lorieView!!)
+            inputController = X11InputController(lorieView!!, onThreeFingerTap = ::toggleKeyboard)
         }
         addDesktopControls()
         lorieView?.requestFocus()
-        startDesktopSessionIfRequested()
+        if (shouldStartSession) {
+            startDesktopSessionIfRequested()
+        } else {
+            waitForDesktopAndReveal()
+        }
     }
 
     private fun addDesktopControls() {
@@ -209,7 +328,7 @@ class DesktopActivity : Activity() {
             isAllCaps = false
             minWidth = 0
             minHeight = 0
-            textSize = 12f
+            textSize = 13f
             setTextColor(Color.WHITE)
             setPadding((12 * density).toInt(), 0, (12 * density).toInt(), 0)
             backgroundTintList = ColorStateList.valueOf(Color.argb(220, 28, 38, 52))
@@ -217,36 +336,12 @@ class DesktopActivity : Activity() {
             text = label
         }
 
+        // Icon-only buttons get a full touch target; they looked cut off when only as wide as their glyph.
+        val iconButtonWidth = (44 * density).toInt()
         val dragHandle = controlButton("⋮").apply {
             contentDescription = "Drag desktop controls"
-            setPadding((8 * density).toInt(), 0, (8 * density).toInt(), 0)
+            minWidth = iconButtonWidth
         }
-
-        fun toggleButton(label: String, keyCode: Int) = controlButton(label).apply {
-            var active = false
-            setOnClickListener {
-                active = !active
-                backgroundTintList = ColorStateList.valueOf(
-                    if (active) Color.argb(255, 70, 130, 180) else Color.argb(220, 28, 38, 52)
-                )
-                val now = SystemClock.uptimeMillis()
-                val action = if (active) KeyEvent.ACTION_DOWN else KeyEvent.ACTION_UP
-                lorieView?.dispatchKeyEvent(KeyEvent(now, now, action, keyCode, 0))
-            }
-        }
-
-        fun clickButton(label: String, keyCode: Int) = controlButton(label).apply {
-            setOnClickListener {
-                val now = SystemClock.uptimeMillis()
-                lorieView?.dispatchKeyEvent(KeyEvent(now, now, KeyEvent.ACTION_DOWN, keyCode, 0))
-                lorieView?.dispatchKeyEvent(KeyEvent(now, now, KeyEvent.ACTION_UP, keyCode, 0))
-            }
-        }
-
-        val ctrlBtn = toggleButton("Ctrl", KeyEvent.KEYCODE_CTRL_LEFT)
-        val altBtn = toggleButton("Alt", KeyEvent.KEYCODE_ALT_LEFT)
-        val escBtn = clickButton("Esc", KeyEvent.KEYCODE_ESCAPE)
-        val tabBtn = clickButton("Tab", KeyEvent.KEYCODE_TAB)
 
         val keyboardButton = controlButton("Keyboard").apply {
             setOnClickListener { showKeyboard() }
@@ -261,60 +356,51 @@ class DesktopActivity : Activity() {
         val hideButton = controlButton("−").apply {
             contentDescription = "Hide desktop controls"
             setOnClickListener { setControlsCollapsed(true) }
-            setPadding((9 * density).toInt(), 0, (9 * density).toInt(), 0)
+            minWidth = iconButtonWidth
         }
 
+        val buttonHeight = (44 * density).toInt()
         controlOverlay = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             addView(dragHandle, LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT, (42 * density).toInt(),
-            ))
-            addView(escBtn, LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT, (42 * density).toInt(),
-            ))
-            addView(tabBtn, LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT, (42 * density).toInt(),
-            ))
-            addView(ctrlBtn, LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT, (42 * density).toInt(),
-            ))
-            addView(altBtn, LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT, (42 * density).toInt(),
+                LinearLayout.LayoutParams.WRAP_CONTENT, buttonHeight,
             ))
             addView(keyboardButton, LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT, (42 * density).toInt(),
+                LinearLayout.LayoutParams.WRAP_CONTENT, buttonHeight,
             ))
             addView(inputModeButton, LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT, (42 * density).toInt(),
+                LinearLayout.LayoutParams.WRAP_CONTENT, buttonHeight,
             ))
             addView(hideButton, LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT, (42 * density).toInt(),
+                LinearLayout.LayoutParams.WRAP_CONTENT, buttonHeight,
             ))
+            // Start collapsed so the bar never covers windows until the user asks for it.
+            visibility = View.INVISIBLE
         }
 
         collapsedControl = controlButton("☰").apply {
             contentDescription = "Show desktop controls"
-            // Keep this measured so switching from a dragged full overlay can
-            // copy absolute coordinates without placing the restore handle off-screen.
-            visibility = View.INVISIBLE
+            if (!desktopRevealed) visibility = View.INVISIBLE
         }
 
+        // Sit just above XFCE's bottom dock, which is scaled up with the X11 display.
+        val dockHeight = XfceMobileProfile.DOCK_SIZE_PX * X11InputController.DISPLAY_SCALE_PERCENT / 100
         val overlayParams = FrameLayout.LayoutParams(
             FrameLayout.LayoutParams.WRAP_CONTENT,
             FrameLayout.LayoutParams.WRAP_CONTENT,
-            Gravity.TOP or Gravity.END,
+            Gravity.BOTTOM or Gravity.END,
         ).apply {
             rightMargin = (8 * density).toInt()
-            topMargin = (52 * density).toInt()
+            bottomMargin = dockHeight + (8 * density).toInt()
         }
         val collapsedParams = FrameLayout.LayoutParams(
             (48 * density).toInt(),
-            (42 * density).toInt(),
-            Gravity.TOP or Gravity.END,
+            buttonHeight,
+            Gravity.BOTTOM or Gravity.END,
         ).apply {
             rightMargin = overlayParams.rightMargin
-            topMargin = overlayParams.topMargin
+            bottomMargin = overlayParams.bottomMargin
         }
 
         placeholder.addView(controlOverlay, overlayParams)
@@ -323,7 +409,52 @@ class DesktopActivity : Activity() {
         collapsedControl?.setOnTouchListener(dragListener(collapsedControl!!) {
             setControlsCollapsed(false)
         })
-        controlOverlay?.bringToFront()
+        collapsedControl?.bringToFront()
+        addExtraKeysBar()
+    }
+
+    /** Esc/Tab/Ctrl/Alt/arrow row that rides on top of the soft keyboard while it is open. */
+    private fun addExtraKeysBar() {
+        val bar = ExtraKeysBar(this) { lorieView }.apply { visibility = View.GONE }
+        extraKeysBar = bar
+        placeholder.addView(bar, FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT,
+            FrameLayout.LayoutParams.WRAP_CONTENT,
+            Gravity.BOTTOM,
+        ))
+        // Typing on the soft keyboard releases one-shot Ctrl/Alt (see LorieView's InputConnection).
+        TermuxMainActivity.getInstance().apply {
+            mExtraKeys = object : TermuxMainActivity.DummyExtraKeys() {
+                override fun unsetSpecialKeys() {
+                    runOnUiThread { extraKeysBar?.onKeyTyped() }
+                }
+            }
+            useTermuxEKBarBehaviour = true
+        }
+        placeholder.setOnApplyWindowInsetsListener { view, insets ->
+            updateExtraKeysBar(insets)
+            view.onApplyWindowInsets(insets)
+        }
+        placeholder.requestApplyInsets()
+    }
+
+    @Suppress("DEPRECATION")
+    private fun updateExtraKeysBar(insets: WindowInsets) {
+        val bar = extraKeysBar ?: return
+        val imeBottom = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            if (insets.isVisible(WindowInsets.Type.ime())) insets.getInsets(WindowInsets.Type.ime()).bottom else 0
+        } else {
+            insets.systemWindowInsetBottom
+        }
+        if (imeBottom > 0) {
+            (bar.layoutParams as FrameLayout.LayoutParams).bottomMargin = imeBottom
+            bar.visibility = View.VISIBLE
+            bar.requestLayout()
+            bar.bringToFront()
+        } else if (bar.visibility == View.VISIBLE) {
+            bar.releaseAll()
+            bar.visibility = View.GONE
+        }
     }
 
     private fun dragListener(target: View, onTap: (() -> Unit)? = null): View.OnTouchListener {
@@ -371,6 +502,31 @@ class DesktopActivity : Activity() {
         from?.visibility = View.INVISIBLE
         to?.visibility = View.VISIBLE
         to?.bringToFront()
+        // The expanded bar is wider than the ☰ handle; once laid out, keep it fully on screen.
+        to?.post { keepOnScreen(to) }
+    }
+
+    private fun keepOnScreen(view: View) {
+        val maxX = (placeholder.width - view.width).coerceAtLeast(0).toFloat()
+        val maxY = (placeholder.height - view.height).coerceAtLeast(0).toFloat()
+        view.x = view.x.coerceIn(0f, maxX)
+        view.y = view.y.coerceIn(0f, maxY)
+    }
+
+    /** Three-finger tap: open the keyboard, or close it when it is already showing. */
+    private fun toggleKeyboard() {
+        val imeVisible = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            window.decorView.rootWindowInsets?.isVisible(WindowInsets.Type.ime()) == true
+        } else {
+            extraKeysBar?.visibility == View.VISIBLE
+        }
+        if (imeVisible) hideKeyboard() else showKeyboard()
+    }
+
+    private fun hideKeyboard() {
+        val view = lorieView ?: return
+        val inputMethod = getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager
+        inputMethod.hideSoftInputFromWindow(view.windowToken, 0)
     }
 
     private fun showKeyboard() {
@@ -400,10 +556,153 @@ class DesktopActivity : Activity() {
                 } else {
                     linuxRuntime.startSession(desktopEnv, "x11")
                 }
+                val ready = if (sessionMode == "chroot") {
+                    chrootRuntime.waitForDesktopReady(desktopEnv)
+                } else {
+                    linuxRuntime.waitForDesktopReady(desktopEnv)
+                }
+                revealDesktop(ready)
             } catch (error: Throwable) {
                 Log.e(TAG, "Desktop session failed", error)
+                revealDesktop(false)
             }
         }, "LinuxDesktopSession").start()
+    }
+
+    private fun waitForDesktopAndReveal() {
+        Thread({
+            val ready = if (sessionMode == "chroot") {
+                chrootRuntime.waitForDesktopReady(desktopEnv)
+            } else {
+                linuxRuntime.waitForDesktopReady(desktopEnv)
+            }
+            revealDesktop(ready)
+        }, "LinuxDesktopReady").start()
+    }
+
+    /** Follows the theme picked in the app (Flutter stores it as flutter.theme_mode). */
+    private fun isLightTheme(): Boolean {
+        val mode = getSharedPreferences("FlutterSharedPreferences", MODE_PRIVATE)
+            .getString("flutter.theme_mode", "dark")
+        return when (mode) {
+            "light" -> true
+            "system" -> (resources.configuration.uiMode and
+                android.content.res.Configuration.UI_MODE_NIGHT_MASK) !=
+                android.content.res.Configuration.UI_MODE_NIGHT_YES
+            else -> false
+        }
+    }
+
+    private fun showLoadingOverlay() {
+        val density = resources.displayMetrics.density
+        val light = isLightTheme()
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+        }
+
+        runCatching {
+            assets.open("flutter_assets/assets/icons/logo.png").use { stream ->
+                ImageView(this).apply {
+                    setImageBitmap(BitmapFactory.decodeStream(stream))
+                    scaleType = ImageView.ScaleType.FIT_CENTER
+                    logoAnimator = FloatingLogoAnimator(this).also { it.start() }
+                    content.addView(
+                        this,
+                        LinearLayout.LayoutParams((112 * density).toInt(), (112 * density).toInt()).apply {
+                            bottomMargin = (26 * density).toInt()
+                        },
+                    )
+                }
+            }
+        }.onFailure { Log.w(TAG, "Loading logo unavailable", it) }
+
+        content.addView(TextView(this).apply {
+            text = "DroidDesk"
+            textSize = 28f
+            setTextColor(if (light) Color.rgb(28, 28, 30) else Color.WHITE)
+            gravity = Gravity.CENTER
+        })
+        content.addView(LoadingSpinnerView(
+            this,
+            arcColor = Color.rgb(10, 132, 255),
+            trackColor = if (light) Color.argb(40, 10, 132, 255) else Color.argb(50, 255, 255, 255),
+        ), LinearLayout.LayoutParams(
+            (44 * density).toInt(),
+            (44 * density).toInt(),
+        ).apply {
+            gravity = Gravity.CENTER_HORIZONTAL
+            topMargin = (22 * density).toInt()
+        })
+        loadingStatus = TextView(this).apply {
+            text = loadingMessages.first()
+            textSize = 14f
+            setTextColor(if (light) Color.rgb(58, 58, 60) else Color.rgb(190, 198, 215))
+            gravity = Gravity.CENTER
+        }.also { status ->
+            content.addView(status, LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+            ).apply { topMargin = (14 * density).toInt() })
+        }
+        loadingEstimate = TextView(this).apply {
+            text = "About $estimatedLoadingSeconds seconds remaining"
+            textSize = 12f
+            setTextColor(if (light) Color.rgb(110, 110, 115) else Color.rgb(130, 143, 164))
+            gravity = Gravity.CENTER
+            contentDescription = text
+        }.also { estimate ->
+            content.addView(estimate, LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+            ).apply { topMargin = (8 * density).toInt() })
+        }
+
+        loadingOverlay = FrameLayout(this).apply {
+            background = GradientDrawable(
+                GradientDrawable.Orientation.TOP_BOTTOM,
+                if (light) {
+                    intArrayOf(Color.rgb(242, 242, 247), Color.rgb(237, 237, 242))
+                } else {
+                    intArrayOf(Color.rgb(12, 18, 32), Color.rgb(4, 7, 14))
+                },
+            )
+            addView(content, FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                Gravity.CENTER,
+            ))
+        }.also { overlay ->
+            placeholder.addView(overlay, FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT,
+            ))
+        }
+        loadingStartedAt = android.os.SystemClock.elapsedRealtime()
+        loadingMessageHandler.postDelayed(loadingMessageTicker, 5_000)
+        loadingMessageHandler.postDelayed(loadingEstimateTicker, 1_000)
+    }
+
+    private fun revealDesktop(ready: Boolean) {
+        runOnUiThread {
+            if (desktopRevealed || isFinishing || isDestroyed) return@runOnUiThread
+            desktopRevealed = true
+            loadingMessageHandler.removeCallbacks(loadingMessageTicker)
+            loadingMessageHandler.removeCallbacks(loadingEstimateTicker)
+            if (!ready) Log.w(TAG, "Revealing desktop after readiness timeout")
+            Log.i(TAG, "Desktop revealed ready=$ready")
+            loadingOverlay?.animate()
+                ?.alpha(0f)
+                ?.setDuration(350)
+                ?.withEndAction {
+                    loadingOverlay?.visibility = View.GONE
+                    logoAnimator?.stop()
+                    collapsedControl?.visibility = View.VISIBLE
+                    collapsedControl?.bringToFront()
+                    lorieView?.requestFocus()
+                }
+                ?.start()
+        }
     }
 
     private fun showX11Error(message: String, error: Throwable?) {
@@ -452,6 +751,16 @@ class DesktopActivity : Activity() {
     }
 
     override fun onDestroy() {
+        clipboardSync?.stop()
+        clipboardSync = null
+        extraKeysBar?.releaseAll()
+        extraKeysBar = null
+        TermuxMainActivity.getInstance().apply {
+            mExtraKeys = null
+            useTermuxEKBarBehaviour = false
+        }
+        loadingMessageHandler.removeCallbacks(loadingMessageTicker)
+        loadingMessageHandler.removeCallbacks(loadingEstimateTicker)
         surfaceCallback?.let { callback -> lorieView?.holder?.removeCallback(callback) }
         surfaceCallback = null
         inputController?.dispose()
@@ -460,6 +769,7 @@ class DesktopActivity : Activity() {
         x11ServiceClient = null
         intentListenerThread?.interrupt()
         intentListenerThread = null
+        if (current?.get() === this) current = null
         super.onDestroy()
     }
 }

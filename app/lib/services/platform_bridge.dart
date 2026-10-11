@@ -13,7 +13,15 @@ class DroidDeskPlatform {
   static Function(double progress, String status)? onExtractProgress;
   static Function(double progress, String status)? onInstallProgress;
   static Function(double progress, String status)? onOptionalInstallProgress;
+  static Function(double progress, String status)? onPackageOperationProgress;
+  static Function(String text)? onPackageOperationLog;
   static Function(String text)? onTerminalOutput;
+
+  static Future<void> updateStatusBarTheme(bool isLightMode) async {
+    try {
+      await _channel.invokeMethod('updateStatusBarTheme', {'isLightMode': isLightMode});
+    } catch (_) {}
+  }
 
   /// Initialize platform channel listeners
   static void init() {
@@ -50,6 +58,17 @@ class DroidDeskPlatform {
             (args['progress'] as num).toDouble(),
             args['status'] as String,
           );
+          break;
+        case 'onPackageOperationProgress':
+          final args = call.arguments as Map;
+          onPackageOperationProgress?.call(
+            (args['progress'] as num).toDouble(),
+            args['status'] as String,
+          );
+          break;
+        case 'onPackageOperationLog':
+          final args = call.arguments as Map;
+          onPackageOperationLog?.call(args['text'] as String);
           break;
       }
     });
@@ -127,6 +146,170 @@ class DroidDeskPlatform {
         false;
   }
 
+  // ── Native package store ──
+
+  static Future<List<Map<String, dynamic>>> searchNativePackages(
+    String query, {
+    int limit = 60,
+  }) async {
+    final result = await _channel.invokeMethod<List<dynamic>>(
+      'searchNativePackages',
+      {'query': query, 'limit': limit},
+    );
+    return (result ?? const [])
+        .map((item) => Map<String, dynamic>.from(item as Map))
+        .toList();
+  }
+
+  static Future<List<Map<String, dynamic>>> getInstalledNativePackages() async {
+    final result = await _channel.invokeMethod<List<dynamic>>(
+      'getInstalledNativePackages',
+    );
+    return (result ?? const [])
+        .map((item) => Map<String, dynamic>.from(item as Map))
+        .toList();
+  }
+
+  static Future<bool> installNativePackage(String packageName) async {
+    return await _channel.invokeMethod<bool>('installNativePackage', {
+          'package': packageName,
+        }) ??
+        false;
+  }
+
+  /// Installed packages with newer versions; [refresh] runs `apt-get update` first (slow).
+  static Future<List<Map<String, dynamic>>> getUpgradablePackages({bool refresh = false}) async {
+    final result = await _channel.invokeMethod<List<dynamic>>(
+      'getUpgradablePackages',
+      {'refresh': refresh},
+    );
+    return (result ?? const [])
+        .map((item) => Map<String, dynamic>.from(item as Map))
+        .toList();
+  }
+
+  static Future<bool> upgradeAllPackages() async {
+    return await _channel.invokeMethod<bool>('upgradeAllPackages') ?? false;
+  }
+
+  /// Linux and device disk usage in bytes: system, home, cache, deviceFree, deviceTotal.
+  static Future<Map<String, dynamic>> getStorageInfo() async {
+    final result = await _channel.invokeMethod<Map<dynamic, dynamic>>('getStorageInfo');
+    return result == null ? {} : Map<String, dynamic>.from(result);
+  }
+
+  /// Deletes downloaded package files; returns bytes freed or -1 on failure.
+  static Future<int> cleanPackageCache() async {
+    return await _channel.invokeMethod<int>('cleanPackageCache') ?? -1;
+  }
+
+  static Future<bool> removeNativePackage(String packageName) async {
+    return await _channel.invokeMethod<bool>('removeNativePackage', {
+          'package': packageName,
+        }) ??
+        false;
+  }
+
+  static Future<bool> cancelNativePackageOperation() async {
+    return await _channel.invokeMethod<bool>('cancelNativePackageOperation') ??
+        false;
+  }
+
+  // ── Unified desktop integration ──
+
+  static Future<List<Map<String, dynamic>>> searchDesktopItems(
+    String query,
+  ) async {
+    final result = await _channel.invokeMethod<List<dynamic>>(
+      'searchDesktopItems',
+      {'query': query},
+    );
+    return (result ?? const [])
+        .map((item) => Map<String, dynamic>.from(item as Map))
+        .toList();
+  }
+
+  static Future<bool> launchDesktopItem(String kind, String id) async {
+    return await _channel.invokeMethod<bool>('launchDesktopItem', {
+          'kind': kind,
+          'id': id,
+        }) ??
+        false;
+  }
+
+  static Future<List<Map<String, dynamic>>> getAndroidApps() async {
+    final result = await _channel.invokeMethod<List<dynamic>>('getAndroidApps');
+    return (result ?? const [])
+        .map((item) => Map<String, dynamic>.from(item as Map))
+        .toList();
+  }
+
+  /// Launcher icon of an installed Android app as PNG bytes, or null if unavailable.
+  static Future<Uint8List?> getAppIcon(String packageName) async {
+    return _channel.invokeMethod<Uint8List>('getAppIcon', {'package': packageName});
+  }
+
+  /// Real icon for a Linux package: `{'format': 'png'|'svg', 'bytes': Uint8List}` or null.
+  /// [iconNames] are extra icon-theme names to try before the package name.
+  static Future<Map<String, dynamic>?> getLinuxAppIcon(
+    String packageName, {
+    List<String> iconNames = const [],
+  }) async {
+    final result = await _channel.invokeMethod<Map<dynamic, dynamic>>(
+      'getLinuxAppIcon',
+      {'package': packageName, 'iconNames': iconNames},
+    );
+    return result == null ? null : Map<String, dynamic>.from(result);
+  }
+
+  static Future<List<String>> getDockPackages() async {
+    final result = await _channel.invokeMethod<List<dynamic>>(
+      'getDockPackages',
+    );
+    return (result ?? const []).cast<String>();
+  }
+
+  static Future<bool> saveDockPackages(List<String> packages) async {
+    return await _channel.invokeMethod<bool>('saveDockPackages', {
+          'packages': packages,
+        }) ??
+        false;
+  }
+
+  static Future<List<Map<String, dynamic>>> listDesktopSnapshots() async {
+    final result = await _channel.invokeMethod<List<dynamic>>(
+      'listDesktopSnapshots',
+    );
+    return (result ?? const [])
+        .map((item) => Map<String, dynamic>.from(item as Map))
+        .toList();
+  }
+
+  static Future<Map<String, dynamic>> createDesktopSnapshot() async {
+    final result = await _channel.invokeMethod<Map<dynamic, dynamic>>(
+      'createDesktopSnapshot',
+    );
+    return Map<String, dynamic>.from(result ?? const {});
+  }
+
+  static Future<bool> restoreDesktopSnapshot(String name) async {
+    return await _channel.invokeMethod<bool>('restoreDesktopSnapshot', {
+          'name': name,
+        }) ??
+        false;
+  }
+
+  static Future<bool> deleteDesktopSnapshot(String name) async {
+    return await _channel.invokeMethod<bool>('deleteDesktopSnapshot', {
+          'name': name,
+        }) ??
+        false;
+  }
+
+  static Future<void> openAndroidControl(String action) async {
+    await _channel.invokeMethod('openAndroidControl', {'action': action});
+  }
+
   // ── Linux Session ──
 
   static Future<bool> startLinux({
@@ -172,5 +355,17 @@ class DroidDeskPlatform {
   static Future<bool> isBatteryOptimized() async {
     final result = await _channel.invokeMethod('isBatteryOptimized');
     return result as bool? ?? true;
+  }
+
+  static Future<void> requestDefaultLauncher() async {
+    await _channel.invokeMethod('requestDefaultLauncher');
+  }
+
+  static Future<bool> unsetDefaultLauncher() async {
+    return await _channel.invokeMethod<bool>('unsetDefaultLauncher') ?? false;
+  }
+
+  static Future<bool> isDefaultLauncher() async {
+    return await _channel.invokeMethod<bool>('isDefaultLauncher') ?? false;
   }
 }

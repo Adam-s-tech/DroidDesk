@@ -2,6 +2,7 @@ package com.orailnoor.droiddesk.runtime
 
 import android.content.Context
 import android.util.Log
+import android.util.Base64
 import java.io.File
 import kotlin.concurrent.thread
 
@@ -52,6 +53,23 @@ class ChrootRuntime(private val context: Context) {
     fun getRootfsPath(): String = rootfsDir.absolutePath
 
     fun getRootfsSizeMB(): Long = rootfsManager.getRootfsSizeMB()
+
+    fun readLinuxClipboard(): String? = runCatching {
+        val encoded = rootShell.exec(
+            "chroot ${rootfsDir.absolutePath} /bin/bash -c " +
+                shellQuote("DISPLAY=:0 xclip -selection clipboard -o 2>/dev/null | base64 -w0"),
+        ).trim()
+        if (encoded.isEmpty()) "" else String(Base64.decode(encoded, Base64.DEFAULT))
+    }.getOrNull()
+
+    fun writeLinuxClipboard(value: String): Boolean = runCatching {
+        val encoded = Base64.encodeToString(value.toByteArray(), Base64.NO_WRAP)
+        rootShell.exec(
+            "chroot ${rootfsDir.absolutePath} /bin/bash -c " +
+                shellQuote("printf %s ${shellQuote(encoded)} | base64 -d | DISPLAY=:0 xclip -selection clipboard -in"),
+        )
+        true
+    }.getOrDefault(false)
 
     fun getOptionalAppsStatus(): Map<String, Boolean> = mapOf(
         "firefox" to File(rootfsDir, "usr/bin/firefox").exists(),
@@ -186,7 +204,7 @@ class ChrootRuntime(private val context: Context) {
                 if (!isPackageInstalled("x11-utils")) {
                     if (execChroot(
                         "DEBIAN_FRONTEND=noninteractive TZ=Etc/UTC apt-get install -y --no-install-recommends " +
-                                "locales ca-certificates wget curl dbus-x11 x11-utils",
+                                "locales ca-certificates wget curl dbus-x11 xclip x11-utils",
                         onLog
                     ) != 0) {
                         execChroot("DEBIAN_FRONTEND=noninteractive dpkg --configure -a", onLog)
@@ -218,7 +236,7 @@ class ChrootRuntime(private val context: Context) {
                         "lxqt" -> "lxqt qterminal pcmanfm-qt featherpad"
                         "mate" -> "mate-desktop-environment mate-terminal"
                         "kde" -> "plasma-desktop konsole dolphin"
-                        else -> "xfce4 xfce4-terminal xfce4-whiskermenu-plugin thunar mousepad"
+                        else -> "xfce4 xfce4-terminal xfce4-whiskermenu-plugin thunar mousepad devilspie2"
                     }
                     if (execChroot(
                         "DEBIAN_FRONTEND=noninteractive TZ=Etc/UTC apt-get install -y --no-install-recommends $dePackages",
@@ -349,10 +367,43 @@ class ChrootRuntime(private val context: Context) {
             return
         }
 
+        // The profile is staged in app storage (see installChrootXfceMobileProfile), so its
+        // version marker lives there rather than in the root-owned chroot home.
+        val upgradingXfceProfile = desktopEnv == "xfce4" &&
+            XfceMobileProfile.needsInstall(File(context.cacheDir, "droiddesk-xfce-profile/root"))
         if (desktopEnv == "xfce4") installChrootXfceMobileProfile()
+        if (desktopEnv == "xfce4") {
+            runCatching {
+                AndroidAppBridge.syncLaunchers(
+                    context = context,
+                    homeDir = File(rootfsDir, "root"),
+                    python = File(rootfsDir, "usr/bin/python3"),
+                    sessionRoot = rootfsDir,
+                )
+            }.onFailure { Log.w(TAG, "Android desktop launchers could not be refreshed", it) }
+        }
 
         ensureMounts()
         bindX11Socket()
+
+        if (!File(rootfsDir, "usr/bin/xclip").canExecute()) {
+            Log.i(TAG, "Installing the chroot clipboard compatibility helper")
+            val installed = execChroot(
+                "DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends xclip",
+                {},
+            ) == 0
+            if (!installed) Log.w(TAG, "Clipboard helper unavailable; clipboard sync will retry next session")
+        }
+
+        // Older installs predate the auto-maximize helper; try once while upgrading the profile.
+        if (upgradingXfceProfile && !File(rootfsDir, "usr/bin/devilspie2").canExecute()) {
+            Log.i(TAG, "Installing the window fitting helper")
+            val installed = execChroot(
+                "DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends devilspie2",
+                {},
+            ) == 0
+            if (!installed) Log.w(TAG, "Window fitting helper unavailable; windows will keep their default size")
+        }
 
         val deBin = when (desktopEnv) {
             "lxqt" -> "lxqt-session"
@@ -467,6 +518,37 @@ SESSEOF
                 Log.d(TAG, "Chroot desktop output stream closed")
             }
         }.start()
+    }
+
+    /** Wait until the chroot desktop shell has created its visible components. */
+    fun waitForDesktopReady(desktopEnv: String = "xfce4", timeoutMs: Long = 45_000): Boolean {
+        val processes = when (desktopEnv) {
+            "lxqt" -> listOf("lxqt-session", "lxqt-panel")
+            "mate" -> listOf("mate-session", "mate-panel")
+            "kde" -> listOf("plasmashell")
+            else -> listOf("xfdesktop", "xfce4-panel")
+        }
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (System.currentTimeMillis() < deadline) {
+            val check = processes.joinToString(" && ") { "pgrep -x '$it' >/dev/null" }
+            val output = runCatching {
+                rootShell.exec("chroot ${rootfsDir.absolutePath} /bin/bash -c ${shellQuote(check)}")
+            }.getOrDefault("")
+            if (!output.contains("not found", ignoreCase = true) &&
+                processes.all { process ->
+                    runCatching {
+                        rootShell.exec(
+                            "chroot ${rootfsDir.absolutePath} /usr/bin/pgrep -x ${shellQuote(process)}",
+                        ).trim().isNotEmpty()
+                    }.getOrDefault(false)
+                }) {
+                Thread.sleep(650)
+                return true
+            }
+            Thread.sleep(150)
+        }
+        Log.w(TAG, "Timed out waiting for chroot $desktopEnv to paint its first desktop frame")
+        return false
     }
 
     /**

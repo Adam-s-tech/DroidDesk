@@ -1,9 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:droiddesk/services/platform_bridge.dart';
+import 'package:droiddesk/theme/droid_theme.dart';
 
 /// Central state management for the entire DroidDesk app.
 class AppState extends ChangeNotifier {
+  // ── Theme State ──
+  ThemeMode _themeMode = ThemeMode.dark;
+
   // ── Setup State ──
   bool _isBootstrapped = false;
   bool _isRunning = false;
@@ -48,6 +52,8 @@ class AppState extends ChangeNotifier {
   bool get autoStartDesktop => _autoStartDesktop;
 
   // ── Getters ──
+  ThemeMode get themeMode => _themeMode;
+  bool get isDarkMode => DroidTheme.isDark;
   bool get isBootstrapped => _isBootstrapped;
   bool get isRunning => _isRunning;
   bool get hasRoot => _hasRoot;
@@ -87,7 +93,15 @@ class AppState extends ChangeNotifier {
 
   // ── Initialization ──
 
+  /// Re-reads the runtime status whenever the app returns to the foreground, since the
+  /// desktop can be stopped from outside Flutter (e.g. the notification's Stop action).
+  AppLifecycleListener? _lifecycleListener;
+
   Future<void> initialize() async {
+    DroidDeskPlatform.onPackageOperationProgress = _onPackageProgress;
+    DroidDeskPlatform.onPackageOperationLog = _onPackageLog;
+    _lifecycleListener ??= AppLifecycleListener(onResume: refreshStatus);    await _loadThemeMode();
+
     // Set up progress callbacks
     DroidDeskPlatform.onDownloadProgress = (progress, status) {
       _downloadProgress = progress;
@@ -176,6 +190,52 @@ class AppState extends ChangeNotifier {
     if (_autoStartDesktop && isSetupComplete && !_isRunning) {
       // Auto-start desktop when the app (launcher) boots up
       startLinux(mode: 'x11');
+    }
+  }
+
+  @override
+  void dispose() {
+    _lifecycleListener?.dispose();
+    super.dispose();
+  }
+
+  // ── Theme Control ──
+
+  Future<void> _loadThemeMode() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final savedMode = prefs.getString('theme_mode');
+      if (savedMode == 'light') {
+        _themeMode = ThemeMode.light;
+      } else if (savedMode == 'system') {
+        _themeMode = ThemeMode.system;
+      } else {
+        _themeMode = ThemeMode.dark;
+      }
+      DroidTheme.currentThemeMode = _themeMode;
+      notifyListeners();
+      await DroidDeskPlatform.updateStatusBarTheme(!isDarkMode);
+    } catch (_) {
+      // Default to dark theme if preferences fail
+    }
+  }
+
+  Future<void> setThemeMode(ThemeMode mode) async {
+    _themeMode = mode;
+    DroidTheme.currentThemeMode = mode;
+    notifyListeners();
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('theme_mode', mode.name);
+      await DroidDeskPlatform.updateStatusBarTheme(!isDarkMode);
+    } catch (_) {}
+  }
+
+  Future<void> toggleThemeMode() async {
+    if (_themeMode == ThemeMode.dark) {
+      await setThemeMode(ThemeMode.light);
+    } else {
+      await setThemeMode(ThemeMode.dark);
     }
   }
 
@@ -392,6 +452,148 @@ class AppState extends ChangeNotifier {
     }
   }
 
+  // ── Package operations ──
+  //
+  // Installs and removals from the App Store live here rather than in the screen, so they keep
+  // running (and stay visible on Home) when the user navigates away.
+
+  String? _activePackage;
+  String _activePackageName = '';
+  List<String> _activePackageIconNames = const [];
+  bool _packageRemoving = false;
+  bool _packageCancelling = false;
+  double _packageProgress = 0;
+  String _packageStatus = '';
+  String _packageLog = '';
+  PackageOperationResult? _lastPackageResult;
+  int _packageResultId = 0;
+
+  String? get activePackage => _activePackage;
+  String get activePackageName => _activePackageName;
+  List<String> get activePackageIconNames => _activePackageIconNames;
+  bool get packageRemoving => _packageRemoving;
+  bool get packageCancelling => _packageCancelling;
+  double get packageProgress => _packageProgress;
+  String get packageStatus => _packageStatus;
+  String get packageLog => _packageLog;
+
+  /// Result of the most recent finished operation; [packageResultId] changes with each one.
+  PackageOperationResult? get lastPackageResult => _lastPackageResult;
+  int get packageResultId => _packageResultId;
+
+  void _onPackageProgress(double progress, String status) {
+    if (_activePackage == null) return;
+    _packageProgress = progress.clamp(0.0, 1.0);
+    _packageStatus = status;
+    notifyListeners();
+  }
+
+  void _onPackageLog(String text) {
+    if (_activePackage == null) return;
+    _packageLog += text;
+    if (_packageLog.length > 12000) {
+      _packageLog = _packageLog.substring(_packageLog.length - 12000);
+    }
+    notifyListeners();
+  }
+
+  void _startPackageOperation(
+    String package,
+    String displayName,
+    List<String> iconNames, {
+    required bool removing,
+  }) {
+    _activePackage = package;
+    _activePackageName = displayName;
+    _activePackageIconNames = iconNames;
+    _packageRemoving = removing;
+    _packageCancelling = false;
+    _packageProgress = 0;
+    _packageStatus = removing ? 'Preparing removal...' : 'Preparing $displayName...';
+    _packageLog = '';
+    notifyListeners();
+  }
+
+  void _finishPackageOperation(bool ok) {
+    final result = PackageOperationResult(
+      package: _activePackage ?? '',
+      displayName: _activePackageName,
+      iconNames: _activePackageIconNames,
+      removed: _packageRemoving,
+      cancelled: _packageCancelling,
+      ok: ok,
+    );
+    _activePackage = null;
+    _packageCancelling = false;
+    _lastPackageResult = result;
+    _packageResultId++;
+    notifyListeners();
+  }
+
+  /// Installs a native package; returns false if another operation is running or it failed.
+  Future<bool> installPackage(
+    String package, {
+    String? displayName,
+    List<String> iconNames = const [],
+  }) async {
+    if (_activePackage != null) return false;
+    _startPackageOperation(package, displayName ?? package, iconNames, removing: false);
+    var ok = false;
+    try {
+      ok = await DroidDeskPlatform.installNativePackage(package);
+    } catch (_) {}
+    _finishPackageOperation(ok);
+    return ok;
+  }
+
+  Future<bool> removePackage(
+    String package, {
+    String? displayName,
+    List<String> iconNames = const [],
+  }) async {
+    if (_activePackage != null) return false;
+    _startPackageOperation(package, displayName ?? package, iconNames, removing: true);
+    var ok = false;
+    try {
+      ok = await DroidDeskPlatform.removeNativePackage(package);
+    } catch (_) {}
+    _finishPackageOperation(ok);
+    return ok;
+  }
+
+  /// Package id used for the "update everything" operation.
+  static const updatesOperation = '__updates__';
+
+  bool get isUpdatingAll => _activePackage == updatesOperation;
+
+  /// Upgrades all non-core packages through the same progress UI as installs.
+  Future<bool> updateAllPackages() async {
+    if (_activePackage != null) return false;
+    _startPackageOperation(updatesOperation, 'packages', const [], removing: false);
+    _packageStatus = 'Checking for updates...';
+    var ok = false;
+    try {
+      ok = await DroidDeskPlatform.upgradeAllPackages();
+    } catch (_) {}
+    _finishPackageOperation(ok);
+    return ok;
+  }
+
+  Future<void> cancelPackageOperation() async {
+    if (_activePackage == null || _packageCancelling || _packageRemoving) return;
+    _packageCancelling = true;
+    _packageStatus = 'Cancelling installation...';
+    notifyListeners();
+    await DroidDeskPlatform.cancelNativePackageOperation();
+  }
+
+  /// Hides the "finished" card on Home.
+  void dismissPackageResult() {
+    if (_lastPackageResult == null) return;
+    _lastPackageResult = null;
+    notifyListeners();
+  }
+
   // ── Session Control ──
 
   Future<void> startLinux({
@@ -483,4 +685,37 @@ class AppState extends ChangeNotifier {
     _errorMessage = null;
     notifyListeners();
   }
+}
+
+/// Outcome of a finished App Store install or removal.
+class PackageOperationResult {
+  final String package;
+  final String displayName;
+  final List<String> iconNames;
+  final bool removed;
+  final bool cancelled;
+  final bool ok;
+
+  const PackageOperationResult({
+    required this.package,
+    required this.displayName,
+    required this.iconNames,
+    required this.removed,
+    required this.cancelled,
+    required this.ok,
+  });
+
+  bool get isUpdateAll => package == AppState.updatesOperation;
+
+  String get message => isUpdateAll
+      ? (cancelled
+          ? 'Update cancelled'
+          : ok
+              ? 'Packages updated'
+              : 'Some updates failed')
+      : cancelled
+      ? '$displayName installation cancelled'
+      : removed
+          ? (ok ? '$displayName removed' : 'Could not remove $displayName')
+          : (ok ? '$displayName installed' : '$displayName installation failed');
 }

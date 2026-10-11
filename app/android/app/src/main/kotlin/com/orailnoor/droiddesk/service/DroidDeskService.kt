@@ -10,9 +10,16 @@ import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import com.orailnoor.droiddesk.MainActivity
+import com.orailnoor.droiddesk.runtime.AndroidAppBridge
+import com.orailnoor.droiddesk.runtime.ChrootRuntime
+import com.orailnoor.droiddesk.runtime.LinuxRuntime
+import com.orailnoor.droiddesk.view.DesktopActivity
+import com.orailnoor.droiddesk.x11.X11ServerService
+import kotlin.concurrent.thread
 
 /**
  * Foreground service that keeps the Linux runtime alive.
@@ -26,17 +33,25 @@ class DroidDeskService : Service() {
     companion object {
         const val CHANNEL_ID = "droiddesk_service"
         const val NOTIFICATION_ID = 1001
+        private const val TAG = "DroidDeskService"
+        private const val ACTION_STOP = "com.orailnoor.droiddesk.action.STOP_DESKTOP"
     }
 
     private var wakeLock: PowerManager.WakeLock? = null
+    @Volatile private var stopping = false
 
     override fun onCreate() {
         super.onCreate()
+        AndroidAppBridge.start(this)
         createNotificationChannel()
         acquireWakeLock()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.action == ACTION_STOP) {
+            stopDesktop()
+            return START_NOT_STICKY
+        }
         val notification = buildNotification("Linux desktop is running")
 
         ServiceCompat.startForeground(
@@ -56,8 +71,28 @@ class DroidDeskService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
+        AndroidAppBridge.stop()
         releaseWakeLock()
         super.onDestroy()
+    }
+
+    /** Same teardown as the Flutter "stopLinux" call, triggered from the notification. */
+    private fun stopDesktop() {
+        if (stopping) return
+        stopping = true
+        DesktopActivity.finishIfOpen()
+        thread(name = "notification-stop-linux") {
+            try {
+                val chrootRuntime = ChrootRuntime(this)
+                if (chrootRuntime.isRunning()) chrootRuntime.stopSession()
+                LinuxRuntime(this).stopSession()
+                stopService(Intent(this, X11ServerService::class.java))
+            } catch (error: Exception) {
+                Log.e(TAG, "Failed to stop the Linux desktop from the notification", error)
+            }
+            ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
+            stopSelf()
+        }
     }
 
     // ── Notification ──
@@ -78,10 +113,20 @@ class DroidDeskService : Service() {
     }
 
     private fun buildNotification(contentText: String): Notification {
-        val pendingIntent = PendingIntent.getActivity(
+        // Brings the existing task forward (showing the desktop if it is open); otherwise
+        // MainActivity reopens the running session without restarting it.
+        val openIntent = PendingIntent.getActivity(
             this,
             0,
-            Intent(this, MainActivity::class.java),
+            Intent(this, MainActivity::class.java)
+                .setAction(MainActivity.ACTION_OPEN_DESKTOP)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+        val stopIntent = PendingIntent.getService(
+            this,
+            1,
+            Intent(this, DroidDeskService::class.java).setAction(ACTION_STOP),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
 
@@ -89,7 +134,9 @@ class DroidDeskService : Service() {
             .setContentTitle("DroidDesk")
             .setContentText(contentText)
             .setSmallIcon(android.R.drawable.ic_menu_compass)
-            .setContentIntent(pendingIntent)
+            .setContentIntent(openIntent)
+            .addAction(0, "Open", openIntent)
+            .addAction(0, "Stop", stopIntent)
             .setOngoing(true)
             .setSilent(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
