@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:droiddesk/theme/droid_theme.dart';
 import 'package:droiddesk/widgets/package_operation_card.dart';
+import 'package:droiddesk/widgets/update_sheet.dart';
 import 'package:droiddesk/screens/storage_screen.dart';
 import 'package:droiddesk/state/app_state.dart';
 import 'package:droiddesk/services/platform_bridge.dart';
@@ -20,6 +21,8 @@ class HomeScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final state = context.watch<AppState>();
     final isDark = state.isDarkMode;
+
+    promptForUpdateIfAvailable(context, state);
 
     final overlayStyle = SystemUiOverlayStyle(
       statusBarColor: Colors.transparent,
@@ -599,6 +602,34 @@ class HomeScreen extends StatelessWidget {
                       final batteryUnrestricted = snapshot.data?[1] == false;
                       return _SettingsGroup(
                         children: [
+                          _SettingsRow(
+                            icon: Icons.system_update_rounded,
+                            color: DroidTheme.primary,
+                            title: 'App version',
+                            subtitle: state.isCheckingUpdate
+                                ? 'Checking for updates…'
+                                : state.availableUpdate != null
+                                    ? 'v${state.availableUpdate!.version} available'
+                                    : state.updateErrorCode == 'network'
+                                        ? 'v${state.appVersion} · Could not check'
+                                        : 'v${state.appVersion} · Tap to check for updates',
+                            trailing: state.availableUpdate != null
+                                ? const _StatusPill(
+                                    label: 'Update',
+                                    color: DroidTheme.primary,
+                                    icon: Icons.arrow_circle_down_rounded,
+                                  )
+                                : null,
+                            onTap: () async {
+                              if (state.availableUpdate == null) {
+                                await state.checkForUpdate(manual: true);
+                              }
+                              if (state.availableUpdate != null && sheetContext.mounted) {
+                                Navigator.pop(sheetContext);
+                                if (pageContext.mounted) showUpdateSheet(pageContext);
+                              }
+                            },
+                          ),
                           _SettingsRow(
                             icon: Icons.pie_chart_rounded,
                             color: const Color(0xFFBF5AF2),
@@ -1447,33 +1478,32 @@ class _ThemeOption extends StatelessWidget {
 /// Small rounded badge confirming a granted permission or completed step.
 class _StatusPill extends StatelessWidget {
   final String label;
+  final Color color;
+  final IconData icon;
 
-  const _StatusPill({required this.label});
+  const _StatusPill({
+    required this.label,
+    this.color = DroidTheme.accent,
+    this.icon = Icons.check_circle_rounded,
+  });
 
   @override
   Widget build(BuildContext context) {
     return Container(
       padding: const EdgeInsets.fromLTRB(8, 5, 10, 5),
       decoration: BoxDecoration(
-        color: DroidTheme.accent.withValues(alpha: 0.14),
+        color: color.withValues(alpha: 0.14),
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: DroidTheme.accent.withValues(alpha: 0.35)),
+        border: Border.all(color: color.withValues(alpha: 0.35)),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const Icon(
-            Icons.check_circle_rounded,
-            size: 14,
-            color: DroidTheme.accent,
-          ),
+          Icon(icon, size: 14, color: color),
           const SizedBox(width: 4),
           Text(
             label,
-            style: DroidTheme.label.copyWith(
-              color: DroidTheme.accent,
-              letterSpacing: 0.1,
-            ),
+            style: DroidTheme.label.copyWith(color: color, letterSpacing: 0.1),
           ),
         ],
       ),

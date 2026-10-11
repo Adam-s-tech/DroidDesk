@@ -4,6 +4,7 @@ import 'package:flutter_animate/flutter_animate.dart';
 import 'package:droiddesk/theme/droid_theme.dart';
 import 'package:droiddesk/screens/setup/setup_progress.dart';
 import 'package:droiddesk/state/app_state.dart';
+import 'package:droiddesk/widgets/update_sheet.dart';
 
 class WelcomeScreen extends StatelessWidget {
   const WelcomeScreen({super.key});
@@ -11,6 +12,7 @@ class WelcomeScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final state = context.watch<AppState>();
+    promptForUpdateIfAvailable(context, state);
 
     return Scaffold(
       body: Container(

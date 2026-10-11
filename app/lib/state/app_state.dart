@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:droiddesk/services/platform_bridge.dart';
+import 'package:droiddesk/services/update_service.dart';
 import 'package:droiddesk/theme/droid_theme.dart';
 
 /// Central state management for the entire DroidDesk app.
@@ -100,7 +101,13 @@ class AppState extends ChangeNotifier {
   Future<void> initialize() async {
     DroidDeskPlatform.onPackageOperationProgress = _onPackageProgress;
     DroidDeskPlatform.onPackageOperationLog = _onPackageLog;
-    _lifecycleListener ??= AppLifecycleListener(onResume: refreshStatus);    await _loadThemeMode();
+    _lifecycleListener ??= AppLifecycleListener(
+      onResume: () {
+        refreshStatus();
+        checkForUpdate();
+      },
+    );
+    await _loadThemeMode();
 
     // Set up progress callbacks
     DroidDeskPlatform.onDownloadProgress = (progress, status) {
@@ -183,6 +190,8 @@ class AppState extends ChangeNotifier {
 
     await refreshStatus();
     await loadDeviceInfo();
+    DroidDeskPlatform.onUpdateProgress = _onUpdateProgress;
+    checkForUpdate();
 
     final prefs = await SharedPreferences.getInstance();
     _autoStartDesktop = prefs.getBool('autoStartDesktop') ?? false;
@@ -450,6 +459,140 @@ class AppState extends ChangeNotifier {
       _installingOptionalApp = null;
       notifyListeners();
     }
+  }
+
+  // ── In-app updates ──
+
+  String _appVersion = '';
+  AppRelease? _availableUpdate;
+  bool _checkingUpdate = false;
+  bool _downloadingUpdate = false;
+  int _updateDownloaded = 0;
+  int _updateTotal = 0;
+  String? _updateError;
+  String? _updateErrorCode;
+  String? _downloadedUpdatePath;
+  bool _updatePromptShown = false;
+
+  String get appVersion => _appVersion;
+  AppRelease? get availableUpdate => _availableUpdate;
+  bool get isCheckingUpdate => _checkingUpdate;
+  bool get isDownloadingUpdate => _downloadingUpdate;
+  int get updateDownloaded => _updateDownloaded;
+  int get updateTotal => _updateTotal;
+  double get updateProgress =>
+      _updateTotal > 0 ? (_updateDownloaded / _updateTotal).clamp(0.0, 1.0) : 0;
+  String? get updateError => _updateError;
+  String? get updateErrorCode => _updateErrorCode;
+  String? get downloadedUpdatePath => _downloadedUpdatePath;
+
+  /// True once per app session when an automatic check found an update to offer.
+  bool takeUpdatePrompt() {
+    if (_availableUpdate == null || _updatePromptShown) return false;
+    _updatePromptShown = true;
+    return true;
+  }
+
+  void _onUpdateProgress(int downloaded, int total) {
+    _updateDownloaded = downloaded;
+    _updateTotal = total;
+    notifyListeners();
+  }
+
+  Future<String> _installedVersion() async {
+    if (_appVersion.isEmpty) {
+      try {
+        final info = await DroidDeskPlatform.getAppVersion();
+        _appVersion = info['versionName']?.toString() ?? '';
+      } catch (_) {}
+    }
+    return _appVersion;
+  }
+
+  /// Looks for a newer GitHub release. Automatic checks are throttled and silent;
+  /// [manual] checks always run and surface errors in [updateError].
+  Future<void> checkForUpdate({bool manual = false}) async {
+    if (_checkingUpdate || _downloadingUpdate) return;
+    _checkingUpdate = true;
+    if (manual) {
+      _updateError = null;
+      _updateErrorCode = null;
+    }
+    notifyListeners();
+    try {
+      final installed = await _installedVersion();
+      if (installed.isEmpty) return;
+      final release = await UpdateService.check(installedVersion: installed, manual: manual);
+      if (release != null || manual) {
+        if (_availableUpdate?.tag != release?.tag) _downloadedUpdatePath = null;
+        _availableUpdate = release;
+      }
+      if (release == null && manual) DroidDeskPlatform.cleanupUpdates();
+    } catch (error) {
+      if (manual) {
+        _updateError = 'Could not reach GitHub. Check your connection.';
+        _updateErrorCode = 'network';
+      }
+    } finally {
+      _checkingUpdate = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> skipUpdate() async {
+    final release = _availableUpdate;
+    if (release == null) return;
+    await UpdateService.skip(release.tag);
+    _availableUpdate = null;
+    notifyListeners();
+  }
+
+  /// Downloads (if needed) and opens the installer. Returns false on error or cancel.
+  Future<bool> downloadAndInstallUpdate() async {
+    final release = _availableUpdate;
+    if (release == null || _downloadingUpdate) return false;
+    _updateError = null;
+    _updateErrorCode = null;
+    var path = _downloadedUpdatePath;
+    if (path == null) {
+      _downloadingUpdate = true;
+      _updateDownloaded = 0;
+      _updateTotal = release.apkSize;
+      notifyListeners();
+      final result = await DroidDeskPlatform.downloadUpdate(
+        url: release.apkUrl,
+        size: release.apkSize,
+        tag: release.tag,
+      );
+      _downloadingUpdate = false;
+      if (result['ok'] != true) {
+        _updateErrorCode = result['code']?.toString();
+        _updateError = switch (_updateErrorCode) {
+          'cancelled' => null,
+          'signature_mismatch' =>
+            'This release is signed with a different key. Install it once from the release page.',
+          'size_mismatch' || 'network' => 'The download did not finish. Check your connection and try again.',
+          _ => result['message']?.toString() ?? 'The update could not be downloaded.',
+        };
+        notifyListeners();
+        return false;
+      }
+      path = result['path'].toString();
+      _downloadedUpdatePath = path;
+    }
+    notifyListeners();
+    final opened = await DroidDeskPlatform.installUpdate(path);
+    if (!opened) {
+      _updateError = 'Could not open the installer.';
+      _updateErrorCode = 'installer';
+      notifyListeners();
+    }
+    return opened;
+  }
+
+  Future<void> cancelUpdateDownload() async {
+    if (!_downloadingUpdate) return;
+    await DroidDeskPlatform.cancelUpdateDownload();
   }
 
   // ── Package operations ──

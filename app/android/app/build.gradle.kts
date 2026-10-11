@@ -1,9 +1,20 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("kotlin-android")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id("dev.flutter.flutter-gradle-plugin")
 }
+
+// Release signing: app/android/key.properties (local) or DROIDDESK_* env vars (CI).
+// Every published release must use this same key, otherwise in-app updates are rejected.
+val releaseKeystore = Properties().apply {
+    rootProject.file("key.properties").takeIf { it.isFile }?.inputStream()?.use(::load)
+}
+fun releaseSetting(property: String, env: String): String? =
+    releaseKeystore.getProperty(property) ?: System.getenv(env)
+val releaseStoreFile = releaseSetting("storeFile", "DROIDDESK_KEYSTORE")
 
 android {
     namespace = "com.orailnoor.droiddesk"
@@ -36,11 +47,26 @@ android {
         }
     }
 
+    signingConfigs {
+        if (releaseStoreFile != null) {
+            create("release") {
+                storeFile = file(releaseStoreFile)
+                storePassword = releaseSetting("storePassword", "DROIDDESK_KEYSTORE_PASSWORD")
+                keyAlias = releaseSetting("keyAlias", "DROIDDESK_KEY_ALIAS")
+                keyPassword = releaseSetting("keyPassword", "DROIDDESK_KEY_PASSWORD")
+            }
+        }
+    }
+
     buildTypes {
         release {
-            // GitHub-distributed testing builds intentionally use Android's
-            // debug key so release APKs are directly installable.
-            signingConfig = signingConfigs.getByName("debug")
+            // Without a release key (contributor builds) fall back to the debug key so the
+            // APK still installs; such builds cannot update a published release in place.
+            signingConfig = if (releaseStoreFile != null) {
+                signingConfigs.getByName("release")
+            } else {
+                signingConfigs.getByName("debug")
+            }
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
