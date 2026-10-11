@@ -433,9 +433,32 @@ class DesktopActivity : Activity() {
         }
         placeholder.setOnApplyWindowInsetsListener { view, insets ->
             updateExtraKeysBar(insets)
+            avoidDisplayCutout(insets)
             view.onApplyWindowInsets(insets)
         }
         placeholder.requestApplyInsets()
+    }
+
+    /**
+     * Keeps the Linux desktop out of the camera notch: the X11 view is inset by the cutout's safe
+     * area plus a little breathing room, so panels and menus never sit under it. The area outside
+     * stays black, which blends with the notch. Recomputed on rotation.
+     */
+    private fun avoidDisplayCutout(insets: WindowInsets) {
+        val view = lorieView ?: return
+        val cutout = insets.displayCutout
+        val gap = (4 * resources.displayMetrics.density).toInt()
+        fun pad(inset: Int) = if (inset > 0) inset + gap else 0
+        val params = view.layoutParams as? FrameLayout.LayoutParams ?: return
+        val left = pad(cutout?.safeInsetLeft ?: 0)
+        val top = pad(cutout?.safeInsetTop ?: 0)
+        val right = pad(cutout?.safeInsetRight ?: 0)
+        val bottom = pad(cutout?.safeInsetBottom ?: 0)
+        if (params.leftMargin == left && params.topMargin == top &&
+            params.rightMargin == right && params.bottomMargin == bottom
+        ) return
+        params.setMargins(left, top, right, bottom)
+        view.layoutParams = params
     }
 
     @Suppress("DEPRECATION")
