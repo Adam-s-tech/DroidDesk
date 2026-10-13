@@ -228,9 +228,14 @@ object AndroidAppBridge {
         val idEnd = "<!-- DroidDesk Android dock ids end -->"
         val pluginStart = "<!-- DroidDesk Android dock plugins start -->"
         val pluginEnd = "<!-- DroidDesk Android dock plugins end -->"
+        // xfconfd rewrites this file without our comment markers, so also drop
+        // any dock ids/launchers left over from earlier sessions; otherwise
+        // every restart appends another (iconless) copy of the dock apps.
         var xml = panelFile.readText()
             .replace(managedXmlBlock(idStart, idEnd), "")
             .replace(managedXmlBlock(pluginStart, pluginEnd), "")
+            .replace(staleDockIdValue, "")
+            .replace(staleDockPluginBlock, "")
 
         val idNeedle = Regex("<value type=\\\"int\\\" value=\\\"24\\\"/>")
         idNeedle.find(xml)?.let { match ->
@@ -290,6 +295,13 @@ object AndroidAppBridge {
             }
         }
     }
+
+    /** Dock launchers use plugin ids 30..37 (see [xfceDockCommand]). */
+    private val staleDockIdValue = Regex("""[ \t]*<value type="int" value="3[0-7]"/>\r?\n?""")
+    private val staleDockPluginBlock = Regex(
+        """[ \t]*<property name="plugin-3[0-7]" type="string" value="launcher">\s*<property name="items" type="array">.*?</property>\s*</property>\r?\n?""",
+        RegexOption.DOT_MATCHES_ALL,
+    )
 
     private fun managedXmlBlock(start: String, end: String): Regex = Regex(
         "${Regex.escape(start)}.*?${Regex.escape(end)}",
