@@ -16,6 +16,9 @@ Connect your phone to a monitor and it becomes a Linux PC. Unplug it and your en
 
 [![Watch the video](https://img.youtube.com/vi/QCr4WWsfVv8/maxresdefault.jpg)](https://youtu.be/QCr4WWsfVv8)
 
+[![Watch the video](https://img.youtube.com/vi/IvvpNrzS21o/maxresdefault.jpg)](https://youtu.be/IvvpNrzS21o)
+
+
 ## What This Actually Runs
 
 Everything below has been tested and confirmed working:
