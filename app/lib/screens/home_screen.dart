@@ -798,11 +798,23 @@ class _TerminalSheetState extends State<_TerminalSheet> {
 
   void _runCommand() async {
     final cmd = _controller.text.trim();
-    if (cmd.isEmpty) return;
-    if (_history.isEmpty || _history.last != cmd) _history.add(cmd);
+    // While a command runs, Enter answers it (an empty line accepts a default
+    // such as apt's "[Y/n]"); otherwise empty input does nothing.
+    if (cmd.isEmpty && !widget.state.isCommandRunning) return;
+    if (cmd.isNotEmpty && (_history.isEmpty || _history.last != cmd)) {
+      _history.add(cmd);
+    }
     _historyIndex = -1;
     _setText('');
     await widget.state.executeCommand(cmd);
+  }
+
+  /// Copies the whole log, e.g. to paste install errors into a bug report.
+  void _copyOutput() {
+    Clipboard.setData(ClipboardData(text: widget.state.terminalOutput.join()));
+    ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+      const SnackBar(content: Text('Terminal output copied')),
+    );
   }
 
   void _interrupt() {
@@ -988,6 +1000,13 @@ class _TerminalSheetState extends State<_TerminalSheet> {
                       ),
                     ),
                     _headerButton(
+                      icon: Icons.copy_all_rounded,
+                      color: DroidTheme.textSecondary,
+                      tooltip: 'Copy output',
+                      onTap: _copyOutput,
+                    ),
+                    const SizedBox(width: 8),
+                    _headerButton(
                       icon: Icons.cleaning_services_rounded,
                       color: DroidTheme.textSecondary,
                       tooltip: 'Clear (Ctrl+L)',
@@ -1015,24 +1034,27 @@ class _TerminalSheetState extends State<_TerminalSheet> {
                   child: Column(
                     children: [
                       Expanded(
-                        child: ListView.builder(
-                          controller: _scrollController,
-                          padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
-                          itemCount: state.terminalOutput.length,
-                          itemBuilder: (context, index) {
-                            final line = state.terminalOutput[index];
-                            final isCommand = line.startsWith('\$');
-                            return SelectableText(
-                              line,
-                              style: DroidTheme.mono.copyWith(
-                                fontSize: 12.5,
-                                height: 1.45,
-                                color: isCommand ? _prompt : _text,
-                                fontWeight:
-                                    isCommand ? FontWeight.w600 : FontWeight.w400,
-                              ),
-                            );
-                          },
+                        // One selection area so a drag can span many lines.
+                        child: SelectionArea(
+                          child: ListView.builder(
+                            controller: _scrollController,
+                            padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+                            itemCount: state.terminalOutput.length,
+                            itemBuilder: (context, index) {
+                              final line = state.terminalOutput[index];
+                              final isCommand = line.startsWith('\$');
+                              return Text(
+                                line,
+                                style: DroidTheme.mono.copyWith(
+                                  fontSize: 12.5,
+                                  height: 1.45,
+                                  color: isCommand ? _prompt : _text,
+                                  fontWeight:
+                                      isCommand ? FontWeight.w600 : FontWeight.w400,
+                                ),
+                              );
+                            },
+                          ),
                         ),
                       ),
                       _inputBar(),

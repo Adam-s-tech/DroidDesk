@@ -42,6 +42,11 @@ class AppState extends ChangeNotifier {
   ];
   List<String> get terminalOutput => _terminalOutput;
 
+  /// A command is still running in the terminal; new lines are its stdin
+  /// (answers such as apt's "[Y/n]"), not new commands.
+  int _runningCommands = 0;
+  bool get isCommandRunning => _runningCommands > 0;
+
   // ── Device Info ──
   Map<String, dynamic> _deviceInfo = {};
 
@@ -784,12 +789,19 @@ class AppState extends ChangeNotifier {
   }
 
   Future<String> executeCommand(String command) async {
+    final isInput = isCommandRunning;
+    if (!isInput) _runningCommands++;
     try {
-      _terminalOutput.add('\$ $command\n');
+      _terminalOutput.add(isInput ? '$command\n' : '\$ $command\n');
       notifyListeners();
       return await DroidDeskPlatform.executeCommand(command);
     } catch (e) {
       return "Error executing command: $e";
+    } finally {
+      if (!isInput) {
+        _runningCommands--;
+        notifyListeners();
+      }
     }
   }
 

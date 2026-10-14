@@ -21,7 +21,7 @@ class LinuxRuntime(private val context: Context) {
     companion object {
         private const val TAG = "LinuxRuntime"
         private const val BOOTSTRAP_MARKER = ".bootstrap_extracted"
-        private const val SHEBANG_MARKER = ".relocated_text_paths_v3"
+        private const val SHEBANG_MARKER = ".relocated_text_paths_v4"
         private const val ELF_PATCH_MARKER = ".elf_runpaths_patched"
         private const val DE_MARKER = ".de_installed"
 
@@ -448,29 +448,51 @@ class LinuxRuntime(private val context: Context) {
 
             // Package installations started inside the XFCE terminal bypass the
             // Kotlin installation flow. Run this after every dpkg transaction so
-            // newly unpacked commands and maintainer scripts never retain
-            // Termux's original, inaccessible interpreter prefix.
+            // newly unpacked scripts never keep Termux's inaccessible prefix.
+            // apt unpacks and configures in separate dpkg runs, so maintainer
+            // scripts are fixed before they execute. The whole script is
+            // rewritten, not just the #! line: bodies such as cups' postinst
+            // ("mkdir -p /data/data/com.termux/...") or the code-oss and
+            // hangover-wine launchers otherwise fail with "Permission denied".
             relocateShebangs.writeText(
                 """
                 #!/system/bin/sh
                 old_prefix="/data/data/com.termux/files/usr"
                 new_prefix="${prefixDir.absolutePath}"
-                scan_marker="${'$'}1"
-                [ -f "${'$'}scan_marker" ] || exit 0
+                old_home="/data/data/com.termux/files/home"
+                new_home="${homeDir.absolutePath}"
+                # "--all" rescans everything once (repairs older installs);
+                # otherwise only files changed since the dpkg run began.
+                if [ "${'$'}1" = "--all" ]; then
+                    changed=""
+                else
+                    [ -f "${'$'}1" ] || exit 0
+                    changed="-cnewer ${'$'}1"
+                fi
                 for root in \
                     "${prefixDir.absolutePath}/bin" \
                     "${prefixDir.absolutePath}/libexec" \
+                    "${prefixDir.absolutePath}/lib" \
+                    "${prefixDir.absolutePath}/opt" \
+                    "${prefixDir.absolutePath}/share" \
                     "${prefixDir.absolutePath}/var/lib/dpkg/info"
                 do
                     [ -d "${'$'}root" ] || continue
                     "${prefixDir.absolutePath}/bin/find" "${'$'}root" \
-                        -type f -cnewer "${'$'}scan_marker" 2>/dev/null |
+                        -type f -perm -100 -size -2M ${'$'}changed \
+                        ! -name droiddesk-relocate-shebangs \
+                        -exec "${prefixDir.absolutePath}/bin/grep" -lIF "/data/data/com.termux/files" {} + 2>/dev/null |
                     while IFS= read -r file; do
                         first_line=$("${prefixDir.absolutePath}/bin/head" -n 1 "${'$'}file" 2>/dev/null)
-                        case "${'$'}first_line" in
-                            "#!${'$'}old_prefix"*)
+                        # dpkg's *.list/*.md5sums must keep Termux paths; only
+                        # maintainer scripts and other #! scripts are rewritten.
+                        case "${'$'}file:${'$'}first_line" in
+                            "${prefixDir.absolutePath}/var/lib/dpkg/info/"*.list:*|"${prefixDir.absolutePath}/var/lib/dpkg/info/"*.md5sums:*|"${prefixDir.absolutePath}/var/lib/dpkg/info/"*.conffiles:*)
+                                ;;
+                            "${prefixDir.absolutePath}/var/lib/dpkg/info/"*inst:*|"${prefixDir.absolutePath}/var/lib/dpkg/info/"*rm:*|"${prefixDir.absolutePath}/var/lib/dpkg/info/"*.config:*|*":#!"*)
                                 "${prefixDir.absolutePath}/bin/sed" -i \
-                                    "1s|${'$'}old_prefix|${'$'}new_prefix|" "${'$'}file"
+                                    -e "s|${'$'}old_prefix|${'$'}new_prefix|g" \
+                                    -e "s|${'$'}old_home|${'$'}new_home|g" "${'$'}file"
                                 ;;
                         esac
                     done
@@ -649,7 +671,8 @@ class LinuxRuntime(private val context: Context) {
         if (oldPrefix == newPrefix) return
 
         val markerFile = File(prefixDir, SHEBANG_MARKER)
-        if (!force && markerFile.exists()) {
+        val migrating = !markerFile.exists()
+        if (!force && !migrating) {
             Log.i(TAG, "Shebangs already patched, skipping")
             return
         }
@@ -691,8 +714,36 @@ class LinuxRuntime(private val context: Context) {
                 }
             }
         }
+        // New dpkg runs relocate their own files; the full scan is a one-time migration.
+        if (migrating) relocateAllScripts()
         markerFile.writeText("done")
         Log.i(TAG, "Patched $patchCount scripts.")
+    }
+
+    private fun hasUnfinishedPackages(): Boolean = runCatching {
+        File(prefixDir, "var/lib/dpkg/status").useLines { lines ->
+            lines.any { it.startsWith("Status: ") && !it.endsWith(" installed") && !it.endsWith(" not-installed") && !it.endsWith(" config-files") }
+        }
+    }.getOrDefault(false)
+
+    /**
+     * Older releases only relocated the #! line of new scripts, so script bodies (and launchers
+     * under lib/ and opt/) could still point at Termux and fail with "Permission denied".
+     */
+    private fun relocateAllScripts() {
+        val relocate = File(prefixDir, "bin/droiddesk-relocate-shebangs")
+        if (!relocate.canExecute()) return
+        runCatching {
+            val process = ProcessBuilder("/system/bin/sh", relocate.absolutePath, "--all")
+                .redirectErrorStream(true)
+                .also { builder ->
+                    builder.environment().clear()
+                    builder.environment().putAll(getTermuxEnv())
+                }
+                .start()
+            process.inputStream.bufferedReader().readText()
+            process.waitFor()
+        }.onFailure { Log.w(TAG, "Full script relocation failed: ${it.message}") }
     }
 
     /** Relocate commands that Xfce compiled as absolute Termux paths. */
@@ -1898,6 +1949,14 @@ class LinuxRuntime(private val context: Context) {
         compileSocketHook()
         patchEmbeddedXfcePaths()
 
+        // Packages whose maintainer scripts failed on older releases stay half-configured and
+        // block every later apt install (and with it the Adreno driver). Finish them once
+        // their scripts have been relocated.
+        if (hasUnfinishedPackages()) {
+            Log.i(TAG, "Finishing packages left half-configured by an earlier install")
+            installPackageGroup("dpkg --configure -a")
+        }
+
         // Repair installations made by older releases, where mesa-zink could
         // remove Mesa and leave the configured llvmpipe fallback unavailable.
         if (!ensureGraphicsPackages()) {
@@ -2031,28 +2090,36 @@ class LinuxRuntime(private val context: Context) {
             # Use the session bus DroidDesk already started
             export DBUS_SESSION_BUS_ADDRESS="unix:path=${dbusSocket.absolutePath}"
 
+            # PulseAudio daemonizes, so it outlives a stopped session. A wedged
+            # one makes every pactl/pulseaudio call (and XFCE's event sounds)
+            # block forever, leaving a black desktop. Never wait on audio
+            # without a time limit, and always start from a fresh daemon.
+            limit() {
+                if command -v timeout >/dev/null 2>&1; then timeout "${'$'}@"; else shift; "${'$'}@"; fi
+            }
+            pkill -9 -x pulseaudio >/dev/null 2>&1 || true
+
             # Native Android audio. AAudio is reliable on modern Android while
             # OpenSL ES remains the compatibility fallback for older devices.
-            pulseaudio -k >/dev/null 2>&1 || true
             if [ "${if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) "1" else "0"}" = "1" ]; then
-                pulseaudio --start --exit-idle-time=-1 \
+                limit 10 pulseaudio --start --exit-idle-time=-1 \
                     --load=module-aaudio-sink >/dev/null 2>&1 || true
                 audio_ready=0
                 for attempt in 1 2 3 4 5 6 7 8 9 10; do
-                    if pactl list short sinks 2>/dev/null | grep -q AAudio_sink; then
+                    if limit 2 pactl list short sinks 2>/dev/null | grep -q AAudio_sink; then
                         audio_ready=1
                         break
                     fi
                     sleep 0.1
                 done
                 if [ "${'$'}audio_ready" != "1" ]; then
-                    pulseaudio -k >/dev/null 2>&1 || true
-                    pulseaudio --start --exit-idle-time=-1 >/dev/null 2>&1 || true
+                    pkill -9 -x pulseaudio >/dev/null 2>&1 || true
+                    limit 10 pulseaudio --start --exit-idle-time=-1 >/dev/null 2>&1 || true
                 fi
             else
-                pulseaudio --start --exit-idle-time=-1 >/dev/null 2>&1 || true
+                limit 10 pulseaudio --start --exit-idle-time=-1 >/dev/null 2>&1 || true
             fi
-            echo "DIAG: PulseAudio sinks: ${'$'}(pactl list short sinks 2>/dev/null | cut -f2 | tr '\n' ' ')"
+            echo "DIAG: PulseAudio sinks: ${'$'}(limit 2 pactl list short sinks 2>/dev/null | cut -f2 | tr '\n' ' ')"
 
             echo "DIAG: Launching $desktopCommand natively on DISPLAY=:0 ..."
             exec $desktopCommand
