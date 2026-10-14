@@ -7,7 +7,6 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.net.LocalServerSocket
 import android.net.LocalSocket
-import android.net.Uri
 import android.provider.Settings
 import android.util.Log
 import java.io.File
@@ -42,7 +41,7 @@ object AndroidAppBridge {
             return preferences.getString("dock_packages", "").orEmpty()
                 .split(',').filter(String::isNotBlank)
         }
-        return defaultDockPackages(context, launcherActivities(context))
+        return defaultDockPackages(launcherActivities(context))
     }
 
     fun setDockPackages(context: Context, packages: List<String>) {
@@ -281,7 +280,7 @@ object AndroidAppBridge {
             val safeName = packageName.replace(Regex("[^A-Za-z0-9_.-]"), "_")
             (30 + index) to "droiddesk-android-$safeName.desktop"
         }
-        val pluginIds = listOf(20, 21, 22, 23) + dock.map { it.first } + listOf(24, 25)
+        val pluginIds = listOf(20, 21, 22, 23) + dock.map { it.first } + listOf(24)
         return buildString {
             for (id in 30..37) {
                 append("xfconf-query -c xfce4-panel -p /plugins/plugin-$id -r >/dev/null 2>&1 || true; ")
@@ -360,25 +359,11 @@ object AndroidAppBridge {
     }
 
     private fun defaultDockPackages(
-        context: Context,
         activities: List<android.content.pm.ResolveInfo>,
     ): List<String> {
         val installed = activities.map { it.activityInfo.packageName }.toSet()
-        val packageManager = context.packageManager
-        val defaultDialer = packageManager.resolveActivity(
-            Intent(Intent.ACTION_DIAL, Uri.parse("tel:")), PackageManager.MATCH_DEFAULT_ONLY,
-        )?.activityInfo?.packageName
-        val defaultMessages = packageManager.resolveActivity(
-            Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:")), PackageManager.MATCH_DEFAULT_ONLY,
-        )?.activityInfo?.packageName
-        return listOf(
-            listOf(defaultDialer, "com.google.android.dialer", "com.android.dialer", "com.samsung.android.dialer"),
-            listOf(defaultMessages, "com.google.android.apps.messaging", "com.android.messaging", "com.samsung.android.messaging"),
-            listOf("com.whatsapp", "com.whatsapp.w4b"),
-            listOf("com.android.chrome"),
-        ).mapNotNull { choices ->
-            choices.filterNotNull().firstOrNull { it in installed }
-        }.distinct()
+        // Keep the default dock short; more apps can be pinned from Desktop Tools.
+        return listOf("com.android.chrome").filter { it in installed }
     }
 
     private fun desktopEscape(value: String): String = value

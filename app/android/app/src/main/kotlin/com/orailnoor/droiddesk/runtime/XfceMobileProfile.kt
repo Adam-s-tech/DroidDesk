@@ -9,10 +9,10 @@ object XfceMobileProfile {
     private const val TAG = "XfceMobileProfile"
     private const val PROFILE_MARKER = ".droiddesk-xfce-mobile-v14"
     private const val MONOSPACE_FONT = "DejaVu Sans Mono"
-    private const val WALLPAPER_ASSET = "droiddesk/ubuntu-touch-wallpaper.jpg"
+    private const val WALLPAPER_ASSET = "droiddesk/sunset-wave-wallpaper.jpg"
 
     /** Height of the bottom launcher dock in X11 pixels; Android overlays sit above it. */
-    const val DOCK_SIZE_PX = 72
+    const val DOCK_SIZE_PX = 88
 
     /** True when the current profile still needs to be (re)installed in [homeDir]. */
     fun needsInstall(homeDir: File): Boolean = !File(homeDir, PROFILE_MARKER).exists()
@@ -178,6 +178,7 @@ object XfceMobileProfile {
             <property name="snap_to_border" type="bool" value="true"/>
             <property name="wrap_windows" type="bool" value="false"/>
             <property name="easy_click" type="string" value="Alt"/>
+            <property name="show_dock_shadow" type="bool" value="false"/>
           </property>
         </channel>
     """.trimIndent() + "\n"
@@ -247,42 +248,41 @@ object XfceMobileProfile {
           <property name="panels" type="array">
             <value type="int" value="1"/>
             <value type="int" value="2"/>
-            <property name="dark-mode" type="bool" value="true"/>
+            <property name="dark-mode" type="bool" value="false"/>
             <property name="panel-1" type="empty">
-              <property name="position" type="string" value="p=9;x=0;y=0"/>
-              <property name="length" type="uint" value="100"/>
+              <property name="position" type="string" value="p=6;x=0;y=0"/>
+              <property name="length" type="uint" value="1"/>
+              <property name="length-adjust" type="bool" value="true"/>
               <property name="position-locked" type="bool" value="true"/>
-              <property name="autohide-behavior" type="uint" value="0"/>
+              <property name="autohide-behavior" type="uint" value="1"/>
               <property name="size" type="uint" value="45"/>
               <property name="icon-size" type="uint" value="30"/>
               <property name="background-style" type="uint" value="1"/>
               <property name="background-rgba" type="array">
+                <value type="double" value="0.965000"/>
+                <value type="double" value="0.961000"/>
+                <value type="double" value="0.957000"/>
                 <value type="double" value="0.000000"/>
-                <value type="double" value="0.000000"/>
-                <value type="double" value="0.000000"/>
-                <value type="double" value="1.000000"/>
               </property>
               <property name="plugin-ids" type="array">
                 <value type="int" value="2"/>
-                <value type="int" value="1"/>
-                <value type="int" value="3"/>
               </property>
             </property>
             <property name="panel-2" type="empty">
               <property name="position" type="string" value="p=10;x=0;y=0"/>
               <property name="mode" type="uint" value="0"/>
-              <property name="length" type="uint" value="100"/>
-              <property name="length-adjust" type="bool" value="false"/>
+              <property name="length" type="uint" value="1"/>
+              <property name="length-adjust" type="bool" value="true"/>
               <property name="position-locked" type="bool" value="true"/>
-              <property name="autohide-behavior" type="uint" value="0"/>
+              <property name="autohide-behavior" type="uint" value="1"/>
               <property name="size" type="uint" value="$DOCK_SIZE_PX"/>
-              <property name="icon-size" type="uint" value="48"/>
+              <property name="icon-size" type="uint" value="60"/>
               <property name="background-style" type="uint" value="1"/>
               <property name="background-rgba" type="array">
+                <value type="double" value="0.965000"/>
+                <value type="double" value="0.961000"/>
+                <value type="double" value="0.957000"/>
                 <value type="double" value="0.000000"/>
-                <value type="double" value="0.000000"/>
-                <value type="double" value="0.000000"/>
-                <value type="double" value="1.000000"/>
               </property>
               <property name="plugin-ids" type="array">
                 <value type="int" value="20"/>
@@ -290,20 +290,15 @@ object XfceMobileProfile {
                 <value type="int" value="22"/>
                 <value type="int" value="23"/>
                 <value type="int" value="24"/>
-                <value type="int" value="25"/>
               </property>
             </property>
           </property>
           <property name="plugins" type="empty">
-            <property name="plugin-1" type="string" value="separator">
-              <property name="expand" type="bool" value="true"/>
-              <property name="style" type="uint" value="0"/>
-            </property>
             <property name="plugin-2" type="string" value="tasklist">
               <property name="show-labels" type="bool" value="false"/>
               <property name="grouping" type="uint" value="1"/>
+              <property name="flat-buttons" type="bool" value="true"/>
             </property>
-            <property name="plugin-3" type="string" value="clock"/>
             <property name="plugin-20" type="string" value="applicationsmenu">
               <property name="show-button-title" type="bool" value="false"/>
             </property>
@@ -326,7 +321,6 @@ object XfceMobileProfile {
               <property name="expand" type="bool" value="true"/>
               <property name="style" type="uint" value="0"/>
             </property>
-            <property name="plugin-25" type="string" value="showdesktop"/>
           </property>
         </channel>
     """.trimIndent() + "\n"

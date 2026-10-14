@@ -8,6 +8,8 @@ import android.os.Looper
 import android.graphics.Color
 import android.graphics.BitmapFactory
 import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.LayerDrawable
+import android.graphics.drawable.RippleDrawable
 import android.view.Window
 import android.view.WindowInsets
 import android.view.WindowInsetsController
@@ -22,11 +24,13 @@ import android.widget.LinearLayout
 import android.util.Log
 import android.widget.Toast
 import android.widget.Button
+import android.widget.ImageButton
 import android.widget.ImageView
 import android.widget.TextView
 import android.view.Gravity
 import android.content.Intent
 import android.content.res.ColorStateList
+import com.orailnoor.droiddesk.R
 import com.orailnoor.droiddesk.service.DroidDeskService
 import com.termux.x11.MainActivity as TermuxMainActivity
 import com.termux.x11.LorieView
@@ -56,7 +60,11 @@ class DesktopActivity : Activity() {
     private var inputController: X11InputController? = null
     private var inputModeButton: Button? = null
     private var controlOverlay: LinearLayout? = null
-    private var collapsedControl: Button? = null
+    private var collapsedControl: View? = null
+    private val collapsedFadeHandler = Handler(Looper.getMainLooper())
+    private val fadeCollapsedControl = Runnable {
+        collapsedControl?.animate()?.alpha(COLLAPSED_IDLE_ALPHA)?.setDuration(400)?.start()
+    }
     private var extraKeysBar: ExtraKeysBar? = null
     private var logoAnimator: FloatingLogoAnimator? = null
     private var surfaceCallback: SurfaceHolder.Callback? = null
@@ -109,6 +117,8 @@ class DesktopActivity : Activity() {
 
     companion object {
         private const val TAG = "DesktopActivity"
+        private const val COLLAPSED_IDLE_ALPHA = 0.4f
+        private const val COLLAPSED_FADE_DELAY_MS = 3_000L
         private var current: java.lang.ref.WeakReference<DesktopActivity>? = null
 
         fun isOpen(): Boolean = current?.get()?.isFinishing == false
@@ -324,63 +334,72 @@ class DesktopActivity : Activity() {
         if (controlOverlay != null) return
         val density = resources.displayMetrics.density
 
-        fun controlButton(label: String) = Button(this).apply {
+        // Frosted, translucent controls: one rounded pill when open, an AssistiveTouch-style
+        // square when collapsed.
+        fun frosted(radius: Float) = GradientDrawable().apply {
+            cornerRadius = radius
+            setColor(Color.argb(200, 22, 26, 34))
+            setStroke((1 * density).toInt(), Color.argb(40, 255, 255, 255))
+        }
+        fun pressRipple() = RippleDrawable(
+            ColorStateList.valueOf(Color.argb(60, 255, 255, 255)),
+            null,
+            GradientDrawable().apply { cornerRadius = 20 * density; setColor(Color.WHITE) },
+        )
+        fun iconButton(icon: Int, label: String) = ImageButton(this).apply {
+            setImageResource(icon)
+            contentDescription = label
+            background = pressRipple()
+            scaleType = android.widget.ImageView.ScaleType.CENTER
+        }
+
+        val buttonHeight = (44 * density).toInt()
+        val keyboardButton = iconButton(R.drawable.ic_dd_keyboard, "Show keyboard").apply {
+            setOnClickListener { showKeyboard() }
+        }
+        inputModeButton = Button(this).apply {
             isAllCaps = false
             minWidth = 0
             minHeight = 0
             textSize = 13f
             setTextColor(Color.WHITE)
-            setPadding((12 * density).toInt(), 0, (12 * density).toInt(), 0)
-            backgroundTintList = ColorStateList.valueOf(Color.argb(220, 28, 38, 52))
-            elevation = 6 * density
-            text = label
-        }
-
-        // Icon-only buttons get a full touch target; they looked cut off when only as wide as their glyph.
-        val iconButtonWidth = (44 * density).toInt()
-        val dragHandle = controlButton("⋮").apply {
-            contentDescription = "Drag desktop controls"
-            minWidth = iconButtonWidth
-        }
-
-        val keyboardButton = controlButton("Keyboard").apply {
-            setOnClickListener { showKeyboard() }
-        }
-        inputModeButton = controlButton(inputController?.modeLabel() ?: "Trackpad").apply {
+            background = pressRipple()
+            stateListAnimator = null
+            compoundDrawablePadding = (6 * density).toInt()
+            setPadding((12 * density).toInt(), 0, (14 * density).toInt(), 0)
+            showInputMode(this)
             setOnClickListener {
                 inputController?.nextMode()
-                text = inputController?.modeLabel() ?: "Trackpad"
+                showInputMode(this)
                 Toast.makeText(this@DesktopActivity, "Input mode: $text", Toast.LENGTH_SHORT).show()
             }
         }
-        val hideButton = controlButton("−").apply {
-            contentDescription = "Hide desktop controls"
+        val hideButton = iconButton(R.drawable.ic_dd_close, "Hide desktop controls").apply {
             setOnClickListener { setControlsCollapsed(true) }
-            minWidth = iconButtonWidth
         }
 
-        val buttonHeight = (44 * density).toInt()
         controlOverlay = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            addView(dragHandle, LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT, buttonHeight,
-            ))
-            addView(keyboardButton, LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT, buttonHeight,
-            ))
+            background = frosted(26 * density)
+            elevation = 10 * density
+            val pad = (4 * density).toInt()
+            setPadding(pad, pad, pad, pad)
+            addView(keyboardButton, LinearLayout.LayoutParams(buttonHeight, buttonHeight))
             addView(inputModeButton, LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.WRAP_CONTENT, buttonHeight,
             ))
-            addView(hideButton, LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT, buttonHeight,
-            ))
+            addView(hideButton, LinearLayout.LayoutParams(buttonHeight, buttonHeight))
             // Start collapsed so the bar never covers windows until the user asks for it.
             visibility = View.INVISIBLE
         }
 
-        collapsedControl = controlButton("☰").apply {
+        // AssistiveTouch-style handle: fades out when idle and lights up while touched.
+        collapsedControl = View(this).apply {
             contentDescription = "Show desktop controls"
+            background = assistiveTouchDrawable(density)
+            elevation = 10 * density
+            alpha = COLLAPSED_IDLE_ALPHA
             if (!desktopRevealed) visibility = View.INVISIBLE
         }
 
@@ -394,9 +413,10 @@ class DesktopActivity : Activity() {
             rightMargin = (8 * density).toInt()
             bottomMargin = dockHeight + (8 * density).toInt()
         }
+        val collapsedSize = (52 * density).toInt()
         val collapsedParams = FrameLayout.LayoutParams(
-            (48 * density).toInt(),
-            buttonHeight,
+            collapsedSize,
+            collapsedSize,
             Gravity.BOTTOM or Gravity.END,
         ).apply {
             rightMargin = overlayParams.rightMargin
@@ -405,10 +425,7 @@ class DesktopActivity : Activity() {
 
         placeholder.addView(controlOverlay, overlayParams)
         placeholder.addView(collapsedControl, collapsedParams)
-        dragHandle.setOnTouchListener(dragListener(controlOverlay!!))
-        collapsedControl?.setOnTouchListener(dragListener(collapsedControl!!) {
-            setControlsCollapsed(false)
-        })
+        collapsedControl?.setOnTouchListener(assistiveTouchListener(collapsedControl!!))
         collapsedControl?.bringToFront()
         addExtraKeysBar()
     }
@@ -494,6 +511,62 @@ class DesktopActivity : Activity() {
         }
     }
 
+    /** iOS AssistiveTouch look: dark translucent rounded square with nested white circles. */
+    private fun assistiveTouchDrawable(density: Float): LayerDrawable {
+        fun circle(alpha: Int) = GradientDrawable().apply {
+            shape = GradientDrawable.OVAL
+            setColor(Color.argb(alpha, 255, 255, 255))
+        }
+        val square = GradientDrawable().apply {
+            cornerRadius = 14 * density
+            setColor(Color.argb(170, 30, 30, 30))
+        }
+        return LayerDrawable(arrayOf(square, circle(45), circle(90), circle(240))).apply {
+            setLayerInset(1, (8 * density).toInt(), (8 * density).toInt(), (8 * density).toInt(), (8 * density).toInt())
+            setLayerInset(2, (12 * density).toInt(), (12 * density).toInt(), (12 * density).toInt(), (12 * density).toInt())
+            setLayerInset(3, (16 * density).toInt(), (16 * density).toInt(), (16 * density).toInt(), (16 * density).toInt())
+        }
+    }
+
+    /** Mouse icon for trackpad mode, finger icon for the touch modes, plus the mode name. */
+    private fun showInputMode(button: Button) {
+        val label = inputController?.modeLabel() ?: "Trackpad"
+        val icon = if (label == "Trackpad") R.drawable.ic_dd_mouse else R.drawable.ic_dd_touch
+        button.text = label
+        button.setCompoundDrawablesRelativeWithIntrinsicBounds(icon, 0, 0, 0)
+    }
+
+    /** Lights the ☰ handle up while touched, snaps it to the nearest side after a drag, then fades it. */
+    private fun assistiveTouchListener(handle: View): View.OnTouchListener {
+        val drag = dragListener(handle) { setControlsCollapsed(false) }
+        var downX = 0f
+        return View.OnTouchListener { view, event ->
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    downX = handle.x
+                    collapsedFadeHandler.removeCallbacks(fadeCollapsedControl)
+                    handle.animate().cancel()
+                    handle.alpha = 1f
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    if (handle.x != downX) {
+                        val margin = 8 * resources.displayMetrics.density
+                        val maxX = (placeholder.width - handle.width).toFloat()
+                        val edgeX = if (handle.x + handle.width / 2f < placeholder.width / 2f) margin else maxX - margin
+                        handle.animate().x(edgeX.coerceIn(0f, maxX.coerceAtLeast(0f))).setDuration(180).start()
+                    }
+                    scheduleCollapsedFade()
+                }
+            }
+            drag.onTouch(view, event)
+        }
+    }
+
+    private fun scheduleCollapsedFade() {
+        collapsedFadeHandler.removeCallbacks(fadeCollapsedControl)
+        collapsedFadeHandler.postDelayed(fadeCollapsedControl, COLLAPSED_FADE_DELAY_MS)
+    }
+
     private fun setControlsCollapsed(collapsed: Boolean) {
         val from = if (collapsed) controlOverlay else collapsedControl
         val to = if (collapsed) collapsedControl else controlOverlay
@@ -504,6 +577,12 @@ class DesktopActivity : Activity() {
         to?.bringToFront()
         // The expanded bar is wider than the ☰ handle; once laid out, keep it fully on screen.
         to?.post { keepOnScreen(to) }
+        if (collapsed) {
+            collapsedControl?.alpha = 1f
+            scheduleCollapsedFade()
+        } else {
+            collapsedFadeHandler.removeCallbacks(fadeCollapsedControl)
+        }
     }
 
     private fun keepOnScreen(view: View) {
@@ -751,6 +830,7 @@ class DesktopActivity : Activity() {
     }
 
     override fun onDestroy() {
+        collapsedFadeHandler.removeCallbacks(fadeCollapsedControl)
         clipboardSync?.stop()
         clipboardSync = null
         extraKeysBar?.releaseAll()
